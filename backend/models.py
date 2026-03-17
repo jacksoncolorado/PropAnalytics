@@ -1,4 +1,4 @@
-from .extensions import db
+from extensions import db
 from datetime import datetime
 
 class Game(db.Model):
@@ -8,9 +8,9 @@ class Game(db.Model):
     home_team = db.Column(db.String(100), nullable=False)
     away_team = db.Column(db.String(100), nullable=False)
     game_date = db.Column(db.DateTime, default=datetime.utcnow)
-    status = db.Column(db.String(20)) # e.g., 'Scheduled', 'Live', 'Final'
+    status = db.Column(db.String(20)) 
     
-    # Relationships
+    
     logs = db.relationship('GameLog', backref='game', lazy=True)
     props = db.relationship('PlayerProp', backref='game', lazy=True)
 
@@ -33,9 +33,9 @@ class PlayerProp(db.Model):
     player_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=False)
     game_id = db.Column(db.Integer, db.ForeignKey('games.id'), nullable=False)
     
-    prop_type = db.Column(db.String(50))  # e.g., 'Points', 'Rebounds'
-    line_value = db.Column(db.Float)      # e.g., 22.5
-    odds = db.Column(db.Integer)          # e.g., -110
+    prop_type = db.Column(db.String(50))  
+    line_value = db.Column(db.Float)     
+    odds = db.Column(db.Integer)          
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 class GameLog(db.Model):

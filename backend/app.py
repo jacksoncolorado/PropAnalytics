@@ -17,10 +17,13 @@ load_dotenv()
 # creates the main app object
 # template_folder → finds HTML files
 # static_folder → finds our CSS/JS files
+import pathlib
+BASE_DIR = pathlib.Path(__file__).parent.parent
+
 app = Flask(
     __name__,
-    template_folder='frontend/templates',
-    static_folder='frontend/static'
+    template_folder=str(BASE_DIR / 'frontend' / 'templates'),
+    static_folder=str(BASE_DIR / 'frontend' / 'static')
 )
 
 # --- DATABASE CONFIGURATION ---

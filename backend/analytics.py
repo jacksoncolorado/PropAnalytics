@@ -6,6 +6,8 @@
 #   2. trend()      — whether their stats are trending up or down
 #
 # Both work from GameLog records already stored in the database.
+# Statistics include the last 20 games rather than the season.
+# 
 # ============================================================
 
 from models import GameLog, Player

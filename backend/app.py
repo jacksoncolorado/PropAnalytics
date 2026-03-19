@@ -43,8 +43,10 @@ db.init_app(app)
 # Routes are the URLs of our app (e.g. /player, /search, /screener)
 # They are defined in separate files inside the /backend/routes/ folder
 # import here when you create new routes
-from routes.player import bp as player_bp# Register the route blueprints (blueprints are just grouped sets of routes)
+from routes.player import bp as player_bp
+from routes.analytics import bp as analytics_bp
 app.register_blueprint(player_bp)
+app.register_blueprint(analytics_bp)
 # --- CREATE DATABASE TABLES ---
 # This creates the actual database tables based on models.py
 with app.app_context():

@@ -1,0 +1,5 @@
+flask
+flask-sqlalchemy
+nba_api
+requests
+python-dotenv

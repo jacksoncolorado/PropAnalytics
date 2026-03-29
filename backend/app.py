@@ -45,8 +45,13 @@ db.init_app(app)
 # import here when you create new routes
 from routes.player import bp as player_bp
 from routes.analytics import bp as analytics_bp
+# odds_bp adds the /api/odds/games and /api/odds/props/<event_id> endpoints,
+# which fetch live NBA betting data (game lines and player props) from
+# The Odds API.  See backend/routes/odds.py and backend/data_fetcher.py.
+from routes.odds import odds_bp
 app.register_blueprint(player_bp)
 app.register_blueprint(analytics_bp)
+app.register_blueprint(odds_bp)
 # --- CREATE DATABASE TABLES ---
 # This creates the actual database tables based on models.py
 with app.app_context():

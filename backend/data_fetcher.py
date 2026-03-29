@@ -15,7 +15,15 @@
 # ============================================================
 
 import os       # used to read environment variables (e.g. ODDS_API_KEY)
+import logging  # standard Python logger — used instead of print so log
+                # level and output destination can be controlled globally
+
 import requests # used to make HTTP GET requests to external APIs
+
+
+# Module-level logger.  The name mirrors the module so log messages are
+# easily traceable: look for "data_fetcher" in your server output.
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
@@ -53,7 +61,7 @@ def fetch_nba_odds():
     # any network call.
     api_key = os.getenv('ODDS_API_KEY')
     if not api_key:
-        print("[data_fetcher] ERROR: ODDS_API_KEY is not set in the environment.")
+        logger.error("ODDS_API_KEY is not set in the environment.")
         return None
 
     # --- 2. BUILD THE REQUEST ---
@@ -82,16 +90,17 @@ def fetch_nba_odds():
     except requests.exceptions.RequestException as e:
         # Catches every network-level failure: DNS errors,
         # connection refused, timeout, SSL errors, etc.
-        print(f"[data_fetcher] Network error while fetching NBA odds: {e}")
+        logger.error("Network error while fetching NBA odds: %s", e)
         return None
 
     # --- 4. CHECK THE HTTP STATUS CODE ---
     # 200 = success; anything else (401 bad key, 429 rate limit,
     # 500 server error) means we cannot use the response body.
     if response.status_code != 200:
-        print(
-            f"[data_fetcher] The Odds API returned status {response.status_code}: "
-            f"{response.text}"
+        logger.error(
+            "The Odds API returned status %d: %s",
+            response.status_code,
+            response.text,
         )
         return None
 

@@ -20,6 +20,8 @@
 # ============================================================
 
 import os       # reads ODDS_API_KEY from the environment
+import logging  # structured logging — avoids bare print() calls
+
 import requests # makes HTTP requests to The Odds API
 
 from flask import Blueprint, jsonify  # Blueprint groups routes; jsonify converts dicts to HTTP JSON responses
@@ -28,6 +30,11 @@ from flask import Blueprint, jsonify  # Blueprint groups routes; jsonify convert
 # data_fetcher.py centralises all outbound HTTP calls so that
 # route handlers stay thin and focused on request/response logic.
 from data_fetcher import fetch_nba_odds
+
+
+# Module-level logger — messages show up as "routes.odds" in server output,
+# making them easy to filter when debugging.
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
@@ -54,12 +61,16 @@ odds_bp = Blueprint('odds', __name__, url_prefix='/api/odds')
 #   available odds (moneyline, spread, total) from The Odds API.
 #
 # HOW IT WORKS:
-#   1. Delegates the actual HTTP call to fetch_nba_odds() in
-#      data_fetcher.py, which handles auth, params, and errors.
-#   2. If fetch_nba_odds() returns None (any failure), this
-#      route responds with a 502 (Bad Gateway) JSON error so
+#   1. First checks that ODDS_API_KEY is present so we can
+#      return a precise 500 (server misconfiguration) vs a 502
+#      (upstream API failure) — the caller deserves to know
+#      which kind of problem occurred.
+#   2. Delegates the actual HTTP call to fetch_nba_odds() in
+#      data_fetcher.py, which handles params, timeout, and errors.
+#   3. If fetch_nba_odds() returns None (network / API failure),
+#      this route responds with 502 (Bad Gateway) JSON error so
 #      the frontend knows the data source is unavailable.
-#   3. On success, the raw list from The Odds API is forwarded
+#   4. On success, the raw list from The Odds API is forwarded
 #      as-is — no transformation needed at this stage.
 #
 # RESPONSE (success):
@@ -67,18 +78,27 @@ odds_bp = Blueprint('odds', __name__, url_prefix='/api/odds')
 #             bookmaker odds from The Odds API schema.
 #
 # RESPONSE (failure):
-#   502 Bad Gateway — JSON { "error": "<message>" }
+#   500 Internal Server Error — ODDS_API_KEY not configured
+#   502 Bad Gateway           — network error or non-200 from API
 # ------------------------------------------------------------------
 @odds_bp.route('/games', methods=['GET'])
 def get_games():
+    # --- Guard: verify the API key exists before delegating ---
+    # Checking here (in addition to inside fetch_nba_odds) lets us
+    # return a 500 (our misconfiguration) rather than a 502 (upstream
+    # failure), giving the client a more accurate picture of the fault.
+    if not os.getenv('ODDS_API_KEY'):
+        logger.error("GET /api/odds/games called but ODDS_API_KEY is not configured.")
+        return jsonify({"error": "ODDS_API_KEY is not configured on the server."}), 500
+
     # Call the data layer; it handles the network request and
     # returns the parsed list, or None on any failure.
     odds_data = fetch_nba_odds()
 
     if odds_data is None:
         # fetch_nba_odds() already logged the specific cause.
-        # We return 502 (upstream server error) rather than 500
-        # because the problem is with the external API, not our code.
+        # We return 502 (upstream server error) because the problem
+        # is with the external API, not our own code.
         return jsonify({"error": "Failed to fetch NBA odds. Check server logs for details."}), 502
 
     # Forward the raw JSON from The Odds API directly to the client.
@@ -120,8 +140,8 @@ def get_games():
 #             player-prop lines for the requested game.
 #
 # RESPONSE (failure):
-#   400 Bad Request — API key missing from environment
-#   502 Bad Gateway — network error or non-200 from The Odds API
+#   500 Internal Server Error — API key missing from environment
+#   502 Bad Gateway           — network error or non-200 from API
 # ------------------------------------------------------------------
 @odds_bp.route('/props/<string:event_id>', methods=['GET'])
 def get_props(event_id):
@@ -130,7 +150,8 @@ def get_props(event_id):
     # at startup by load_dotenv() in app.py.
     api_key = os.getenv('ODDS_API_KEY')
     if not api_key:
-        return jsonify({"error": "ODDS_API_KEY is not configured on the server."}), 400
+        logger.error("GET /api/odds/props/%s called but ODDS_API_KEY is not configured.", event_id)
+        return jsonify({"error": "ODDS_API_KEY is not configured on the server."}), 500
 
     # --- 2. BUILD THE EVENT-SPECIFIC ENDPOINT ---
     # The Odds API structures player-prop data under a per-event
@@ -159,7 +180,7 @@ def get_props(event_id):
 
     except requests.exceptions.RequestException as e:
         # Covers DNS failures, connection refused, timeouts, SSL errors.
-        print(f"[odds_bp] Network error fetching props for event {event_id}: {e}")
+        logger.error("Network error fetching props for event %s: %s", event_id, e)
         return jsonify({"error": "Network error while fetching player props."}), 502
 
     # --- 4. CHECK STATUS ---
@@ -167,9 +188,11 @@ def get_props(event_id):
     # or the game is no longer listed.  We surface the status code
     # in the error message so the frontend can react appropriately.
     if response.status_code != 200:
-        print(
-            f"[odds_bp] The Odds API returned {response.status_code} "
-            f"for event {event_id}: {response.text}"
+        logger.error(
+            "The Odds API returned %d for event %s: %s",
+            response.status_code,
+            event_id,
+            response.text,
         )
         return jsonify({
             "error": f"The Odds API returned status {response.status_code}.",

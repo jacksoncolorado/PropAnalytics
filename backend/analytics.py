@@ -1,13 +1,21 @@
 # ============================================================
 # analytics.py — CORE ANALYTICS ENGINE
 #
-# Two main capabilities:
-#   1. hit_rate()   — how often a player has cleared a prop line
-#   2. trend()      — whether their stats are trending up or down
+# Three main capabilities:
+#   1. hit_rate()       — how often a player has cleared a single-stat prop line
+#   2. combo_hit_rate() — how often a player has cleared a multi-stat combo line
+#   3. trend()          — whether a player's stats are trending up or down
 #
-# Both work from GameLog records already stored in the database.
-# Statistics include the last 20 games rather than the season.
-# 
+# All three work from GameLog records already stored in the database.
+# They look at the last N games (default 20) rather than a full season.
+#
+# CONSUMED BY:
+#   routes/analytics.py (analytics_bp)   — exposes hit_rate / prop_report via API
+#   routes/screener.py  (screener_bp)    — calls hit_rate / combo_hit_rate to
+#                                          score every prop returned by the screener
+#
+# DATA SOURCE:
+#   GameLog rows in models.py, populated externally (e.g. via nba_api ingestion).
 # ============================================================
 
 from models import GameLog, Player
@@ -22,13 +30,34 @@ def _get_game_logs(player_id: int, stat: str, n_games: int = 20) -> list[float]:
     """
     Fetch the most recent n_games stat values for a player, ordered oldest-first.
 
-    stat must be one of: 'points', 'rebounds', 'assists'
-    Returns a list of numeric values (floats).  Empty list if no data.
+    HOW IT FITS IN:
+      This is the single data-access function that every public analytics
+      function calls.  It reads one stat column from the GameLog table
+      defined in models.py.  The stat name must exactly match a column
+      on GameLog (e.g. 'points', 'threes', 'steals').
+
+    PARAMETERS:
+      player_id : int   — primary key of the Player in the database
+      stat      : str   — must be one of the valid stat column names
+      n_games   : int   — how many recent games to look back (default 20)
+
+    RETURNS:
+      list[float] — stat values ordered oldest → newest.  Empty list if
+                     the player has no game logs in the database.
+
+    RAISES:
+      ValueError — if stat is not in the valid set
     """
-    valid_stats = {'points', 'rebounds', 'assists'}
+    # All seven stat columns that exist on the GameLog model in models.py.
+    # Points, rebounds, assists were the original three; threes, blocks,
+    # steals, turnovers were added to support the expanded Odds API markets.
+    valid_stats = {'points', 'rebounds', 'assists', 'threes', 'blocks', 'steals', 'turnovers'}
     if stat not in valid_stats:
         raise ValueError(f"stat must be one of {valid_stats}, got '{stat}'")
 
+    # Query the most recent n_games GameLog rows for this player.
+    # order_by(desc(GameLog.id)) gives us newest-first; we reverse below
+    # so the caller gets oldest-first (easier for trend analysis).
     logs = (
         GameLog.query
         .filter_by(player_id=player_id)
@@ -40,25 +69,33 @@ def _get_game_logs(player_id: int, stat: str, n_games: int = 20) -> list[float]:
     if not logs:
         return []
 
+    # Pull out the single stat column as a float and reverse to
+    # oldest-first order for consistent downstream processing.
     values = [float(getattr(log, stat)) for log in logs]
     values.reverse()
     return values
 
 
 # ---------------------------------------------------------------------------
-# HIT RATE
+# HIT RATE (single stat)
 # ---------------------------------------------------------------------------
 
 def hit_rate(player_id: int, stat: str, line: float, n_games: int = 20) -> dict:
     """
-    Calculate how often a player has exceeded a prop line.
+    Calculate how often a player has exceeded a single-stat prop line.
+
+    HOW IT FITS IN:
+      Called by:
+        - GET /api/analytics/hit-rate/… in routes/analytics.py
+        - GET /api/screener/props      in routes/screener.py (for non-combo props)
+      The "line" value typically comes from a PlayerProp.line_value in models.py.
 
     Parameters
     ----------
     player_id : int
         Primary key of the player in the database.
     stat : str
-        One of 'points', 'rebounds', 'assists'.
+        One of the valid GameLog stat columns (e.g. 'points', 'threes').
     line : float
         The prop line to test against (e.g. 25.5).
     n_games : int
@@ -110,6 +147,104 @@ def hit_rate(player_id: int, stat: str, line: float, n_games: int = 20) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# HIT RATE (combo / multi-stat)
+# ---------------------------------------------------------------------------
+
+def combo_hit_rate(player_id: int, stats: list, line: float, n_games: int = 20) -> dict:
+    """
+    Calculate how often a player has exceeded a COMBINED multi-stat prop line.
+
+    HOW IT FITS IN:
+      Called by GET /api/screener/props in routes/screener.py for combo
+      props like "player_points_rebounds_assists".  The screener detects
+      combo props by checking if the prop_type maps to multiple stat
+      columns, then calls this function instead of hit_rate().
+
+    LOGIC:
+      1. Fetch game logs for each stat separately using _get_game_logs().
+      2. Align them by index (same game position in the list).
+      3. Sum the values per game to get a combined total.
+      4. Count how many combined totals exceed the line — same math as
+         hit_rate() uses for a single stat.
+
+    EXAMPLE:
+      combo_hit_rate(42, ['points', 'rebounds', 'assists'], 35.5)
+      → sums pts + reb + ast per game, checks how many times > 35.5
+
+    Parameters
+    ----------
+    player_id : int
+        Primary key of the player in the database.
+    stats : list[str]
+        List of stat names to combine, e.g. ['points', 'rebounds', 'assists'].
+        Each must be a valid GameLog stat column.
+    line : float
+        The combined prop line to test against (e.g. 35.5 for PRA).
+    n_games : int
+        How many recent games to look back (default 20).
+
+    Returns
+    -------
+    dict — same shape as hit_rate(), but with:
+        stat set to "+".join(stats), e.g. "points+rebounds+assists"
+        values containing the per-game summed totals
+    """
+    # --- 1. FETCH LOGS FOR EACH STAT ---
+    # _get_game_logs returns oldest-first lists, all the same length
+    # (limited to n_games).  If any stat returns empty, we have no data.
+    all_stat_values = []
+    for s in stats:
+        vals = _get_game_logs(player_id, s, n_games)
+        all_stat_values.append(vals)
+
+    # Build a friendly label like "points+rebounds+assists" for display
+    # and for the screener to echo back to the frontend.
+    combined_stat_name = "+".join(stats)
+
+    # --- 2. HANDLE MISSING DATA ---
+    # If any individual stat returns no logs, we cannot compute a
+    # meaningful combined value.
+    if not all_stat_values or any(len(v) == 0 for v in all_stat_values):
+        return {
+            "player_id": player_id,
+            "stat": combined_stat_name,
+            "line": line,
+            "games_used": 0,
+            "hits": 0,
+            "misses": 0,
+            "hit_rate": None,
+            "hit_rate_pct": "N/A",
+            "values": [],
+        }
+
+    # --- 3. SUM VALUES PER GAME ---
+    # Use the shortest list length in case different stats have
+    # different numbers of logged games.
+    min_len = min(len(v) for v in all_stat_values)
+    combined_values = []
+    for i in range(min_len):
+        game_total = sum(v[i] for v in all_stat_values)
+        combined_values.append(game_total)
+
+    # --- 4. COMPUTE HIT RATE (same formula as hit_rate()) ---
+    hits = sum(1 for v in combined_values if v > line)
+    misses = len(combined_values) - hits
+    rate = hits / len(combined_values)
+
+    return {
+        "player_id": player_id,
+        "stat": combined_stat_name,
+        "line": line,
+        "games_used": len(combined_values),
+        "hits": hits,
+        "misses": misses,
+        "hit_rate": round(rate, 4),
+        "hit_rate_pct": f"{rate * 100:.1f}%",
+        "values": combined_values,
+    }
+
+
+# ---------------------------------------------------------------------------
 # TREND ANALYSIS
 # ---------------------------------------------------------------------------
 
@@ -121,10 +256,16 @@ def trend(player_id: int, stat: str, n_games: int = 20) -> dict:
     The window is split in half: older half vs newer half.
     If n_games is odd the extra game goes to the newer half.
 
+    HOW IT FITS IN:
+      Called by:
+        - GET /api/analytics/prop-report/… in routes/analytics.py
+        - GET /api/screener/props          in routes/screener.py
+          (to attach a "trend" direction to each screener result)
+
     Parameters
     ----------
     player_id : int
-    stat : str  — one of 'points', 'rebounds', 'assists'
+    stat : str  — one of the valid GameLog stat columns
     n_games : int — default 20
 
     Returns
@@ -195,6 +336,9 @@ def prop_report(player_id: int, stat: str, line: float, n_games: int = 20) -> di
     """
     One-call convenience wrapper that returns both hit rate and trend data
     together, plus a short plain-English summary.
+
+    HOW IT FITS IN:
+      Called by GET /api/analytics/prop-report/… in routes/analytics.py.
 
     Returns
     -------

@@ -4,7 +4,7 @@
 # ============================================================
 
 # --- IMPORTS ---
-from flask import Flask  # web framework — handles URLs and pages
+from flask import Flask, jsonify  # web framework — handles URLs and pages; jsonify for JSON responses
 from extensions import db  # database connection
 from dotenv import load_dotenv  # read secret keys from the .env file
 import os  # reading environment variables
@@ -49,9 +49,37 @@ from routes.analytics import bp as analytics_bp
 # which fetch live NBA betting data (game lines and player props) from
 # The Odds API.  See backend/routes/odds.py and backend/data_fetcher.py.
 from routes.odds import odds_bp
+# screener_bp adds GET /api/screener/props — the prop screener endpoint
+# that filters stored PlayerProp rows by odds/stat, calculates hit rates
+# using analytics.py, and returns a ranked JSON list to the frontend.
+# See backend/routes/screener.py.
+from routes.screener import screener_bp
 app.register_blueprint(player_bp)
 app.register_blueprint(analytics_bp)
 app.register_blueprint(odds_bp)
+app.register_blueprint(screener_bp)
+
+# ------------------------------------------------------------------
+# ADMIN ROUTE: POST /api/admin/fetch-props
+#
+# PURPOSE:
+#   Manual trigger to pull fresh player-prop odds from The Odds API
+#   and store them in the PlayerProp table (models.py).
+#
+# HOW IT FITS IN:
+#   Calls fetch_and_store_props() from data_fetcher.py, which handles
+#   all API calls and database writes.  Returns the summary dict
+#   { games_processed, props_stored, errors } as JSON.
+#
+# After this route runs, the screener endpoint
+# (GET /api/screener/props) will have fresh data to work with.
+# ------------------------------------------------------------------
+@app.route('/api/admin/fetch-props', methods=['POST'])
+def admin_fetch_props():
+    from data_fetcher import fetch_and_store_props
+    summary = fetch_and_store_props()
+    return jsonify(summary)
+
 # --- CREATE DATABASE TABLES ---
 # This creates the actual database tables based on models.py
 with app.app_context():

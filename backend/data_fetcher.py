@@ -4,26 +4,89 @@
 # This module is responsible for making HTTP requests to
 # third-party APIs on behalf of the Flask application.
 # It sits between the raw API providers and our route
-# handlers: routes call functions here, and functions here
-# call the outside world.
+# handlers / database: routes call functions here, and
+# functions here call the outside world and (optionally)
+# write results into the database defined in models.py.
 #
-# Currently implemented:
-#   - fetch_nba_odds()  → The Odds API (game-level markets)
+# FUNCTIONS:
+#   fetch_nba_odds()        → returns raw NBA game odds JSON
+#                             (consumed by routes/odds.py)
+#   fetch_and_store_props() → pulls player-prop odds from the API,
+#                             stores them as PlayerProp rows in the
+#                             database, and returns a summary dict
+#                             (consumed by POST /api/admin/fetch-props
+#                             in app.py)
 #
-# The route that consumes fetch_nba_odds() lives in:
-#   backend/routes/odds.py  (odds_bp blueprint)
+# ENVIRONMENT VARIABLES REQUIRED:
+#   ODDS_API_KEY — your key from https://the-odds-api.com
 # ============================================================
 
 import os       # used to read environment variables (e.g. ODDS_API_KEY)
 import logging  # standard Python logger — used instead of print so log
                 # level and output destination can be controlled globally
+from datetime import datetime  # used to set fetched_at on PlayerProp rows
 
-import requests # used to make HTTP GET requests to external APIs
+import requests  # used to make HTTP GET requests to external APIs
+
+from extensions import db          # SQLAlchemy instance — used for db.session
+from models import Game, Player, PlayerProp  # database models we read/write
 
 
 # Module-level logger.  The name mirrors the module so log messages are
 # easily traceable: look for "data_fetcher" in your server output.
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# PROP MARKET GROUP DEFINITIONS
+#
+# The Odds API limits the number of markets per request.
+# We split the full set of player-prop markets into four groups
+# (A–D) and make one API call per group per game.  This keeps
+# each call focused and conserves API credits.
+#
+# These lists are used by fetch_and_store_props() below.
+# ============================================================
+
+# Group A — standard single-stat over/under props.
+# These map 1-to-1 to the stat columns on GameLog in models.py
+# (except player_double_double, which is a derived stat).
+MARKET_GROUP_A = (
+    "player_points,player_rebounds,player_assists,"
+    "player_threes,player_blocks,player_steals,"
+    "player_turnovers,player_double_double"
+)
+
+# Group B — combo props that combine multiple stats.
+# e.g. "player_points_rebounds_assists" = PRA (points + rebounds + assists).
+# The screener in routes/screener.py detects these via the COMBO_PROP_MAP
+# and calls combo_hit_rate() from analytics.py instead of hit_rate().
+MARKET_GROUP_B = (
+    "player_points_rebounds_assists,player_points_rebounds,"
+    "player_points_assists,player_rebounds_assists"
+)
+
+# Group C — alternate lines for single-stat props.
+# Same stats as Group A but with wider line choices and different odds.
+# fetch_and_store_props() sets is_alternate=True on these PlayerProp rows.
+MARKET_GROUP_C = (
+    "player_points_alternate,player_rebounds_alternate,"
+    "player_assists_alternate,player_threes_alternate,"
+    "player_blocks_alternate,player_steals_alternate,"
+    "player_turnovers_alternate"
+)
+
+# Group D — alternate lines for combo props.
+# Same combos as Group B but with alternate lines.
+MARKET_GROUP_D = (
+    "player_points_rebounds_assists_alternate,"
+    "player_points_rebounds_alternate,"
+    "player_points_assists_alternate,"
+    "player_rebounds_assists_alternate"
+)
+
+# All four groups collected so we can iterate over them easily.
+MARKET_GROUPS = [MARKET_GROUP_A, MARKET_GROUP_B, MARKET_GROUP_C, MARKET_GROUP_D]
 
 
 # ------------------------------------------------------------------
@@ -47,12 +110,6 @@ logger = logging.getLogger(__name__)
 #   None  — on any failure (network error, bad status code,
 #           missing API key).  The caller is responsible for
 #           turning None into a user-facing error response.
-#
-# ENVIRONMENT VARIABLES REQUIRED:
-#   ODDS_API_KEY  — your key from https://the-odds-api.com
-#                   Set this in your .env file; it is loaded
-#                   automatically by load_dotenv() in app.py
-#                   before this function is ever called.
 # ------------------------------------------------------------------
 def fetch_nba_odds():
     # --- 1. READ THE API KEY ---
@@ -109,3 +166,275 @@ def fetch_nba_odds():
     # Python list/dict that Flask can later serialise back to
     # JSON for the frontend.
     return response.json()
+
+
+# ------------------------------------------------------------------
+# _fetch_event_props()   (internal helper)
+#
+# PURPOSE:
+#   Fetch player-prop odds for a single NBA game (identified by
+#   its Odds API event_id) for one market group.
+#
+# HOW IT FITS IN:
+#   Called by fetch_and_store_props() below — once for each of
+#   the four MARKET_GROUPS per game.  Keeps the main function
+#   readable and separates HTTP concerns from DB concerns.
+#
+# RETURNS:
+#   dict  — parsed JSON on success (the event object with
+#           bookmaker prop data).
+#   None  — on any failure.
+# ------------------------------------------------------------------
+def _fetch_event_props(event_id: str, markets: str, api_key: str) -> dict | None:
+    """Fetch prop odds for one event and one market group."""
+
+    url = (
+        f"https://api.the-odds-api.com/v4/sports/basketball_nba"
+        f"/events/{event_id}/odds"
+    )
+
+    params = {
+        "regions": "us",
+        "markets": markets,
+        "oddsFormat": "american",
+        "apiKey": api_key,
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=15)
+    except requests.exceptions.RequestException as e:
+        logger.error(
+            "Network error fetching props for event %s, markets [%s]: %s",
+            event_id, markets[:40], e,
+        )
+        return None
+
+    if response.status_code != 200:
+        logger.error(
+            "Odds API returned %d for event %s, markets [%s]: %s",
+            response.status_code, event_id, markets[:40], response.text[:200],
+        )
+        return None
+
+    return response.json()
+
+
+# ------------------------------------------------------------------
+# fetch_and_store_props()
+#
+# PURPOSE:
+#   The main prop-ingestion pipeline.  Pulls every player-prop
+#   line for today's NBA games from The Odds API and writes them
+#   into the PlayerProp table (models.py).
+#
+# HOW IT FITS IN THE APP:
+#   Called by POST /api/admin/fetch-props in app.py.
+#   That route is the manual trigger a developer or admin uses
+#   to refresh the odds data.  After this function returns, the
+#   screener endpoint (GET /api/screener/props in routes/screener.py)
+#   can query the freshly-stored PlayerProp rows.
+#
+# HIGH-LEVEL FLOW:
+#   1. Hit the games endpoint (h2h only) to get today's games.
+#   2. For each game, upsert a Game row using odds_event_id.
+#   3. For each game, make 4 API calls (one per market group).
+#   4. For each bookmaker → market → outcome pair, upsert a
+#      PlayerProp row (auto-creating the Player if needed).
+#   5. Commit after each game is fully processed.
+#   6. Return a summary dict { games_processed, props_stored, errors }.
+#
+# MUST RUN INSIDE FLASK APP CONTEXT:
+#   This function uses db.session (from extensions.py) and queries
+#   SQLAlchemy models, so it must be called from within
+#   app.app_context().  The POST route in app.py handles that
+#   automatically because Flask routes run inside the context.
+#
+# RETURNS:
+#   dict with keys:
+#     games_processed : int — number of games we iterated over
+#     props_stored    : int — total PlayerProp rows inserted
+#     errors          : list[str] — human-readable error messages
+# ------------------------------------------------------------------
+def fetch_and_store_props() -> dict:
+    # --- 1. VALIDATE THE API KEY ---
+    api_key = os.getenv('ODDS_API_KEY')
+    if not api_key:
+        logger.error("ODDS_API_KEY is not set — cannot fetch props.")
+        return {"games_processed": 0, "props_stored": 0, "errors": ["ODDS_API_KEY not set"]}
+
+    errors = []       # accumulate non-fatal error messages
+    games_processed = 0
+    props_stored = 0
+
+    # --- 2. FETCH TODAY'S NBA GAMES ---
+    # We request only h2h (moneyline) because we just need the game list.
+    # The actual player-prop markets come from the per-event calls below.
+    games_url = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
+    games_params = {
+        "regions": "us",
+        "markets": "h2h",
+        "oddsFormat": "american",
+        "apiKey": api_key,
+    }
+
+    try:
+        games_resp = requests.get(games_url, params=games_params, timeout=15)
+    except requests.exceptions.RequestException as e:
+        msg = f"Network error fetching games list: {e}"
+        logger.error(msg)
+        return {"games_processed": 0, "props_stored": 0, "errors": [msg]}
+
+    if games_resp.status_code != 200:
+        msg = f"Games endpoint returned {games_resp.status_code}: {games_resp.text[:200]}"
+        logger.error(msg)
+        return {"games_processed": 0, "props_stored": 0, "errors": [msg]}
+
+    games_data = games_resp.json()
+    logger.info("Found %d NBA games from The Odds API.", len(games_data))
+
+    # --- 3. PROCESS EACH GAME ---
+    for game_obj in games_data:
+        event_id = game_obj.get("id")
+        home_team = game_obj.get("home_team", "Unknown")
+        away_team = game_obj.get("away_team", "Unknown")
+
+        # --- 3a. UPSERT THE GAME ROW ---
+        # Look up by odds_event_id to avoid creating duplicate Game rows
+        # for the same real-world game.  If found, update mutable fields
+        # (team names may change in API responses, e.g. due to formatting).
+        # If not found, create a new Game row.
+        game_record = Game.query.filter_by(odds_event_id=event_id).first()
+        if game_record:
+            # Update existing Game record with latest data from the API
+            # so we don't leave stale metadata in the database.
+            game_record.home_team = home_team
+            game_record.away_team = away_team
+        else:
+            game_record = Game(
+                home_team=home_team,
+                away_team=away_team,
+                odds_event_id=event_id,
+                game_date=datetime.utcnow(),
+            )
+            db.session.add(game_record)
+        # Flush so game_record.id is available for PlayerProp FK below.
+        db.session.flush()
+
+        game_props_count = 0  # props stored for this game
+
+        # --- 3b. FETCH PROPS FOR EACH MARKET GROUP ---
+        # Each group is a comma-separated string of market keys.
+        # We make one API call per group (4 calls per game).
+        for group in MARKET_GROUPS:
+            event_data = _fetch_event_props(event_id, group, api_key)
+            if event_data is None:
+                errors.append(f"Failed to fetch group [{group[:30]}…] for event {event_id}")
+                continue
+
+            # --- 3c. EXTRACT BOOKMAKER → MARKET → OUTCOMES ---
+            # The Odds API response structure:
+            #   { "bookmakers": [ { "key": "draftkings", "markets": [ { "key": "player_points", "outcomes": [...] } ] } ] }
+            bookmakers = event_data.get("bookmakers", [])
+            for bookmaker_obj in bookmakers:
+                bookmaker_key = bookmaker_obj.get("key", "unknown")
+
+                for market_obj in bookmaker_obj.get("markets", []):
+                    market_key = market_obj.get("key", "")  # e.g. "player_points"
+
+                    # Determine if this is an alternate-line prop.
+                    # The Odds API appends "_alternate" to the market key for alt lines.
+                    is_alt = "alternate" in market_key
+
+                    # --- 3d. PAIR OVER/UNDER OUTCOMES ---
+                    # The Odds API returns outcomes as a flat list.  For player props
+                    # each outcome has a "description" (player name), a "name" (Over/Under),
+                    # a "price" (American odds), and a "point" (the line value).
+                    # We need to group by (player_name, line_value) to pair the Over and Under.
+                    outcomes = market_obj.get("outcomes", [])
+
+                    # Build a lookup: (player_name, point) → {over_odds, under_odds}
+                    paired = {}
+                    for outcome in outcomes:
+                        player_name = outcome.get("description", "")
+                        point = outcome.get("point")       # the line value (float)
+                        price = outcome.get("price")       # American odds (int)
+                        side = outcome.get("name", "")     # "Over" or "Under"
+
+                        if not player_name or point is None or price is None:
+                            continue
+
+                        pair_key = (player_name, point)
+                        if pair_key not in paired:
+                            paired[pair_key] = {"over_odds": None, "under_odds": None}
+
+                        if side == "Over":
+                            paired[pair_key]["over_odds"] = price
+                        elif side == "Under":
+                            paired[pair_key]["under_odds"] = price
+
+                    # --- 3e. WRITE PLAYER PROP ROWS ---
+                    for (player_name, point), odds_pair in paired.items():
+
+                        # Look up the player by name.  If not found, auto-create a
+                        # minimal Player row so we can store the prop.  Team/position
+                        # will be NULL until filled by another data source.
+                        player = Player.query.filter_by(name=player_name).first()
+                        if not player:
+                            player = Player(name=player_name)
+                            db.session.add(player)
+                            db.session.flush()  # get player.id
+
+                        # Delete any existing prop for the same combination to
+                        # avoid duplicates when the pipeline is run multiple times.
+                        PlayerProp.query.filter_by(
+                            player_id=player.id,
+                            game_id=game_record.id,
+                            prop_type=market_key,
+                            bookmaker=bookmaker_key,
+                            line_value=point,
+                        ).delete()
+
+                        # Create the new PlayerProp row with fresh data.
+                        prop = PlayerProp(
+                            player_id=player.id,
+                            game_id=game_record.id,
+                            prop_type=market_key,
+                            line_value=point,
+                            over_odds=odds_pair["over_odds"],
+                            under_odds=odds_pair["under_odds"],
+                            is_alternate=is_alt,
+                            bookmaker=bookmaker_key,
+                            fetched_at=datetime.utcnow(),
+                        )
+                        db.session.add(prop)
+                        game_props_count += 1
+
+        # --- 3f. COMMIT AFTER EACH GAME ---
+        # Committing per-game means a failure on game N+1 doesn't
+        # roll back the props already stored for games 1 through N.
+        try:
+            db.session.commit()
+            games_processed += 1
+            props_stored += game_props_count
+            logger.info(
+                "Committed %d props for %s vs %s (event %s).",
+                game_props_count, away_team, home_team, event_id,
+            )
+        except Exception as e:
+            db.session.rollback()
+            msg = f"DB commit failed for event {event_id}: {e}"
+            logger.error(msg)
+            errors.append(msg)
+
+    # --- 4. RETURN SUMMARY ---
+    # The POST /api/admin/fetch-props route in app.py returns this
+    # dict directly as JSON to the caller.
+    logger.info(
+        "fetch_and_store_props complete: %d games, %d props, %d errors.",
+        games_processed, props_stored, len(errors),
+    )
+    return {
+        "games_processed": games_processed,
+        "props_stored": props_stored,
+        "errors": errors,
+    }

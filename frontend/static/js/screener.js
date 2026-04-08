@@ -16,9 +16,23 @@ document.addEventListener('DOMContentLoaded', function () {
     [
       { value: '', text: 'All Types' },
       { value: 'player_points', text: 'Points' },
+      { value: 'player_points_alternate', text: 'Points Alternate' },
       { value: 'player_rebounds', text: 'Rebounds' },
+      { value: 'player_rebounds_alternate', text: 'Rebounds Alternate' },
       { value: 'player_assists', text: 'Assists' },
-      { value: 'player_threes', text: 'Threes' }
+      { value: 'player_assists_alternate', text: 'Assists Alternate' },
+      { value: 'player_threes', text: 'Threes' },
+      { value: 'player_threes_alternate', text: 'Threes Alternate' },
+      { value: 'player_blocks', text: 'Blocks' },
+      { value: 'player_blocks_alternate', text: 'Blocks Alternate' },
+      { value: 'player_steals', text: 'Steals' },
+      { value: 'player_steals_alternate', text: 'Steals Alternate' },
+      { value: 'player_turnovers', text: 'Turnovers' },
+      { value: 'player_points_rebounds_assists', text: 'PTS+REB+AST' },
+      { value: 'player_points_rebounds_assists_alternate', text: 'PTS+REB+AST Alternate' },
+      { value: 'player_points_rebounds', text: 'PTS+REB' },
+      { value: 'player_points_assists', text: 'PTS+AST' },
+      { value: 'player_rebounds_assists', text: 'REB+AST' },
     ].forEach(function (opt) {
       var o = document.createElement('option');
       o.value = opt.value;
@@ -106,6 +120,22 @@ document.addEventListener('DOMContentLoaded', function () {
       if (minHit && minHit.value) params.set('min_hit_rate', (parseFloat(minHit.value) / 100).toString());
       if (sampleSize && sampleSize.value) params.set('sample_size', sampleSize.value);
 
+      // Inject sort controls above results if not already there
+      var existingSort = document.getElementById('screenerSortBar');
+      if (!existingSort) {
+        var sortBar = document.createElement('div');
+        sortBar.id = 'screenerSortBar';
+        sortBar.style.cssText = 'display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;';
+        sortBar.innerHTML =
+          '<span style="color:#98a7bb;font-size:0.78rem;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;align-self:center;">Sort:</span>' +
+          '<button onclick="sortResults(\'hit_rate\',\'desc\')" style="padding:6px 14px;border-radius:999px;border:1px solid rgba(148,163,184,0.22);background:#1a2432;color:#dbeafe;font-size:0.82rem;cursor:pointer;">Hit Rate ↓</button>' +
+          '<button onclick="sortResults(\'hit_rate\',\'asc\')" style="padding:6px 14px;border-radius:999px;border:1px solid rgba(148,163,184,0.22);background:#1a2432;color:#dbeafe;font-size:0.82rem;cursor:pointer;">Hit Rate ↑</button>' +
+          '<button onclick="sortResults(\'odds\',\'desc\')" style="padding:6px 14px;border-radius:999px;border:1px solid rgba(148,163,184,0.22);background:#1a2432;color:#dbeafe;font-size:0.82rem;cursor:pointer;">Best Odds ↓</button>' +
+          '<button onclick="sortResults(\'odds\',\'asc\')" style="padding:6px 14px;border-radius:999px;border:1px solid rgba(148,163,184,0.22);background:#1a2432;color:#dbeafe;font-size:0.82rem;cursor:pointer;">Best Odds ↑</button>' +
+          '<button onclick="sortResults(\'game_time\',\'asc\')" style="padding:6px 14px;border-radius:999px;border:1px solid rgba(148,163,184,0.22);background:#1a2432;color:#dbeafe;font-size:0.82rem;cursor:pointer;">Soonest Game</button>';
+        var resultsSection = document.getElementById('results');
+        if (resultsSection) resultsSection.insertBefore(sortBar, resultsSection.firstChild);
+      }
       var resultsGrid = document.querySelector('.results-grid');
       if (resultsGrid) {
         resultsGrid.innerHTML = '<p style="color:#98a7bb;padding:18px;">Loading...</p>';
@@ -116,20 +146,53 @@ document.addEventListener('DOMContentLoaded', function () {
         .then(function (data) {
           if (!resultsGrid) return;
 
-          if (!data || data.length === 0) {
+          // Show timestamp above results
+          var tsEl = document.getElementById('screenerTimestamp');
+          if (!tsEl) {
+            tsEl = document.createElement('p');
+            tsEl.id = 'screenerTimestamp';
+            tsEl.style.cssText = 'color:#98a7bb;font-size:0.82rem;margin-bottom:12px;';
+            resultsGrid.parentElement.insertBefore(tsEl, resultsGrid);
+          }
+          tsEl.textContent = data.fetched_at ? 'Odds pulled at ' + data.fetched_at : '';
+
+          var results = data.results || [];
+          window._screenerData = results;
+
+          if (!results || results.length === 0) {
             resultsGrid.innerHTML = '<div class="empty-state"><p>No props match your filters. Try adjusting your criteria.</p></div>';
             return;
           }
 
           resultsGrid.innerHTML = '';
-          data.forEach(function (prop) {
+          results.forEach(function (prop) {
             var card = document.createElement('div');
             card.className = 'result-card';
 
-            var displayType = (prop.prop_type || '')
-              .replace('player_', '')
-              .replace(/_/g, ' ')
-              .replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+            var PROP_LABELS = {
+              'player_points': 'Points',
+              'player_points_alternate': 'Points Alt',
+              'player_rebounds': 'Rebounds',
+              'player_rebounds_alternate': 'Rebounds Alt',
+              'player_assists': 'Assists',
+              'player_assists_alternate': 'Assists Alt',
+              'player_threes': 'Threes',
+              'player_threes_alternate': 'Threes Alt',
+              'player_blocks': 'Blocks',
+              'player_blocks_alternate': 'Blocks Alt',
+              'player_steals': 'Steals',
+              'player_steals_alternate': 'Steals Alt',
+              'player_turnovers': 'Turnovers',
+              'player_points_rebounds_assists': 'PTS+REB+AST',
+              'player_points_rebounds_assists_alternate': 'PTS+REB+AST Alt',
+              'player_points_rebounds': 'PTS+REB',
+              'player_points_rebounds_alternate': 'PTS+REB Alt',
+              'player_points_assists': 'PTS+AST',
+              'player_points_assists_alternate': 'PTS+AST Alt',
+              'player_rebounds_assists': 'REB+AST',
+              'player_rebounds_assists_alternate': 'REB+AST Alt',
+            };
+            var displayType = PROP_LABELS[prop.prop_type] || prop.prop_type;
 
             var hitPct = prop.hit_rate_pct || 'N/A';
             var oddsDisplay = prop.over_odds !== null && prop.over_odds !== undefined
@@ -159,4 +222,57 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
   }
+  window.sortResults = function(field, dir) {
+    var data = window._screenerData;
+    if (!data) return;
+    data.sort(function(a, b) {
+      var aVal, bVal;
+      if (field === 'hit_rate') {
+        aVal = a.hit_rate || 0;
+        bVal = b.hit_rate || 0;
+      } else if (field === 'odds') {
+        aVal = a.over_odds || 0;
+        bVal = b.over_odds || 0;
+      } else if (field === 'game_time') {
+        aVal = a.game_time || '';
+        bVal = b.game_time || '';
+      }
+      if (dir === 'asc') return aVal > bVal ? 1 : -1;
+      return aVal < bVal ? 1 : -1;
+    });
+    var resultsGrid = document.querySelector('.results-grid');
+    if (!resultsGrid) return;
+    resultsGrid.innerHTML = '';
+    data.forEach(function(prop) {
+      var card = document.createElement('div');
+      card.className = 'result-card';
+      var PROP_LABELS = {
+        'player_points':'Points','player_points_alternate':'Points Alt',
+        'player_rebounds':'Rebounds','player_rebounds_alternate':'Rebounds Alt',
+        'player_assists':'Assists','player_assists_alternate':'Assists Alt',
+        'player_threes':'Threes','player_threes_alternate':'Threes Alt',
+        'player_blocks':'Blocks','player_blocks_alternate':'Blocks Alt',
+        'player_steals':'Steals','player_steals_alternate':'Steals Alt',
+        'player_turnovers':'Turnovers',
+        'player_points_rebounds_assists':'PTS+REB+AST',
+        'player_points_rebounds_assists_alternate':'PTS+REB+AST Alt',
+        'player_points_rebounds':'PTS+REB','player_points_rebounds_alternate':'PTS+REB Alt',
+        'player_points_assists':'PTS+AST','player_points_assists_alternate':'PTS+AST Alt',
+        'player_rebounds_assists':'REB+AST','player_rebounds_assists_alternate':'REB+AST Alt',
+      };
+      var displayType = PROP_LABELS[prop.prop_type] || prop.prop_type;
+      var hitPct = prop.hit_rate_pct || 'N/A';
+      var oddsDisplay = prop.over_odds !== null && prop.over_odds !== undefined
+        ? (prop.over_odds > 0 ? '+' + prop.over_odds : prop.over_odds) : 'N/A';
+      card.innerHTML =
+        '<div class="pill-row"><span class="pill">' + displayType + '</span><span class="odds">' + oddsDisplay + '</span></div>' +
+        '<h3>' + (prop.player_name || 'Unknown') + '</h3>' +
+        '<div class="meta">' +
+          '<div class="meta-box"><strong>' + (prop.line_value !== undefined ? prop.line_value : '—') + '</strong><span>line</span></div>' +
+          '<div class="meta-box"><strong>' + hitPct + '</strong><span>hit rate</span></div>' +
+          '<div class="meta-box"><strong>' + oddsDisplay + '</strong><span>over odds</span></div>' +
+        '</div>';
+      resultsGrid.appendChild(card);
+    });
+  };
 });

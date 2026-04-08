@@ -22,7 +22,8 @@ import logging
 
 from flask import Blueprint, jsonify, request  # request gives us query params
 
-from models import PlayerProp, Player                # DB models we query
+from datetime import datetime, timezone
+from models import PlayerProp, Player, Game
 from analytics import hit_rate, combo_hit_rate, trend # analytics functions
 
 
@@ -149,6 +150,14 @@ screener_bp = Blueprint('screener', __name__, url_prefix='/api/screener')
 # RESPONSE (error — 400):
 #   JSON { "error": "..." }
 # ------------------------------------------------------------------
+def _get_game_time(game_id):
+    if not game_id:
+        return None
+    game = Game.query.get(game_id)
+    if not game or not game.game_date:
+        return None
+    return game.game_date.strftime("%-I:%M %p")
+
 @screener_bp.route('/props', methods=['GET'])
 def get_screener_props():
     # --- 1. PARSE QUERY PARAMETERS ---
@@ -255,6 +264,8 @@ def get_screener_props():
             "hit_rate_pct": hr["hit_rate_pct"],
             "trend":        trend_direction,
             "games_used":   hr["games_used"],
+            "fetched_at":   prop.fetched_at.strftime("%-I:%M %p") if prop.fetched_at else None,
+            "game_time":    _get_game_time(prop.game_id),
         })
 
     # --- 4. SORT BY HIT RATE DESCENDING ---
@@ -262,4 +273,13 @@ def get_screener_props():
     results.sort(key=lambda r: r["hit_rate"], reverse=True)
 
     logger.info("Screener returning %d scored props (after min_hit_rate filter).", len(results))
-    return jsonify(results), 200
+    latest_fetch = None
+    if results:
+        fetched_times = [r["fetched_at"] for r in results if r["fetched_at"]]
+        if fetched_times:
+            latest_fetch = fetched_times[0]
+
+    return jsonify({
+        "results": results,
+        "fetched_at": latest_fetch
+    }), 200

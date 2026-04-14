@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}PropAnalytics{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              slateNight: "#0b1118",
+              slatePanel: "#121a24",
+              slateCard: "#1a2432",
+              skyAccent: "#60a5fa",
+              skySoft: "#dbeafe"
+            },
+            fontFamily: {
+              display: ["Avenir Next", "Trebuchet MS", "Segoe UI", "sans-serif"],
+              mono: ["SFMono-Regular", "Menlo", "monospace"]
+            }
+          }
+        }
+      };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/custom.css') }}"
+    />
+    <style>
+      :root {
+        --bg: #0b1118;
+        --surface: #121a24;
+        --surface-strong: #1a2432;
+        --ink: #e7eef8;
+        --muted: #98a7bb;
+        --line: rgba(148, 163, 184, 0.22);
+        --accent: #60a5fa;
+        --accent-strong: #dbeafe;
+        --teal: #38bdf8;
+        --shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+        --radius: 24px;
+        --sans: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+        --mono: "SFMono-Regular", "Menlo", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: var(--sans);
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(96, 165, 250, 0.24), transparent 25%),
+          radial-gradient(circle at 85% 15%, rgba(56, 189, 248, 0.12), transparent 18%),
+          linear-gradient(180deg, #0b1118 0%, #101823 52%, #151f2d 100%);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      .page {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .site-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+        gap: 16px;
+        align-items: stretch;
+        margin-bottom: 22px;
+      }
+
+      .brand-shell,
+      .search-shell,
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(18, 26, 36, 0.92);
+        box-shadow: var(--shadow);
+      }
+
+      .brand-shell,
+      .search-shell {
+        padding: 18px 20px;
+      }
+
+      .brand-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 16px;
+      }
+
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 48px;
+        border: 2px solid var(--ink);
+        border-radius: 14px;
+        background: linear-gradient(135deg, #2563eb, #60a5fa);
+        font-weight: 800;
+        box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.24);
+      }
+
+      .brand-copy strong {
+        display: block;
+        font-size: 1.06rem;
+      }
+
+      .brand-copy span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .nav-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .nav-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 40px;
+        padding: 0 14px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 999px;
+        background: rgba(26, 36, 50, 0.82);
+        color: var(--muted);
+        font-size: 0.84rem;
+        font-weight: 700;
+        transition:
+          transform 140ms ease,
+          border-color 140ms ease,
+          color 140ms ease;
+      }
+
+      .nav-chip:hover,
+      .nav-chip.is-active {
+        color: var(--accent-strong);
+        border-color: rgba(96, 165, 250, 0.34);
+        transform: translateY(-1px);
+      }
+
+      .search-shell {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .search-title {
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .search-form {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+      }
+
+      .search-input {
+        min-height: 48px;
+        width: 100%;
+        padding: 0 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface-strong);
+        color: var(--ink);
+      }
+
+      .search-input::placeholder {
+        color: var(--muted);
+      }
+
+      .search-button {
+        min-height: 48px;
+        padding: 0 18px;
+        border: none;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #2563eb, #60a5fa);
+        color: #ffffff;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+      }
+
+      .search-help {
+        color: var(--muted);
+        font-size: 0.84rem;
+        line-height: 1.5;
+      }
+
+      .page-main {
+        display: grid;
+        gap: 22px;
+      }
+
+      .panel {
+        padding: 28px;
+      }
+
+      .panel-header {
+        margin-bottom: 18px;
+      }
+
+      .panel-header h1,
+      .panel-header h2 {
+        margin-bottom: 8px;
+        font-size: clamp(1.8rem, 3vw, 2.4rem);
+        letter-spacing: -0.03em;
+      }
+
+      .section-lead {
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(96, 165, 250, 0.18);
+        color: var(--accent-strong);
+        font-family: var(--mono);
+        font-size: 0.76rem;
+        font-weight: 700;
+      }
+
+      .empty-state {
+        padding: 22px;
+        border: 1px dashed rgba(148, 163, 184, 0.28);
+        border-radius: 20px;
+        background: rgba(26, 36, 50, 0.72);
+        color: var(--muted);
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (max-width: 920px) {
+        .site-header {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .page {
+          padding: 16px;
+        }
+
+        .brand-shell,
+        .search-shell,
+        .panel {
+          padding: 22px;
+        }
+
+        .search-form {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+    {% block head %}{% endblock %}
+  </head>
+  <body class="{% block body_class %}{% endblock %}">
+    <div class="page">
+      <header class="site-header">
+        <section class="brand-shell" aria-label="Primary navigation">
+          <div class="brand-row">
+            <a
+              class="brand-mark"
+              href="{{ url_for('player.index') }}"
+              aria-label="Go to homepage"
+            >
+              PA
+            </a>
+            <div class="brand-copy">
+              <strong>PropAnalytics</strong>
+              <span>
+                {{ nav_subtitle or "NBA prop screener and betting analytics dashboard" }}
+              </span>
+            </div>
+          </div>
+
+          <nav class="nav-row">
+            <a
+              class="nav-chip{% if active_page == 'home' %} is-active{% endif %}"
+              href="{{ url_for('player.index') }}"
+            >
+              Home
+            </a>
+            <a
+              class="nav-chip{% if active_page == 'screener' %} is-active{% endif %}"
+              href="{{ url_for('player.index') }}#screener"
+            >
+              Screener
+            </a>
+            <a
+              class="nav-chip{% if active_page == 'games' %} is-active{% endif %}"
+              href="{{ url_for('player.index') }}#games"
+            >
+              Today's Games
+            </a>
+            <span class="nav-chip">Flask + Jinja + SQLite</span>
+          </nav>
+        </section>
+
+        <section class="search-shell" aria-label="Player search">
+          <div>
+            <p class="search-title">Player Search</p>
+            <p class="search-help">
+              Jump straight to a player page from anywhere in the app.
+              Press Enter or click the button to open a player profile.
+            </p>
+          </div>
+
+          <form id="playerSearchForm" class="search-form" role="search">
+            <label class="sr-only" for="playerSearchInput">
+              Search for a player
+            </label>
+            <input
+              id="playerSearchInput"
+              class="search-input"
+              type="search"
+              name="player"
+              placeholder="Search players like Nikola Jokic"
+              autocomplete="off"
+            />
+            <button class="search-button" type="submit">Open Player</button>
+          </form>
+        </section>
+      </header>
+
+      <main class="page-main">
+        {% block content %}
+        <section class="panel">
+          <div class="panel-header">
+            <h1>Shared Layout Ready</h1>
+            <p class="section-lead">
+              This base template provides the shared navbar, player
+              search, Tailwind CDN, Chart.js CDN, and reusable page
+              shell for the homepage, game page, and player page.
+            </p>
+          </div>
+          <div class="empty-state">
+            Child templates should extend
+            <span class="pill">base.html</span> and override the
+            <code>content</code> block with page-specific UI.
+          </div>
+        </section>
+        {% endblock %}
+      </main>
+    </div>
+
+    <script>
+      (function () {
+        function buildPlayerPath(playerName) {
+          if (!playerName) return "";
+
+          var trimmed = playerName.trim();
+          if (!trimmed) return "";
+
+          var slug = trimmed.replace(/\s+/g, "-");
+          return "/player/" + encodeURIComponent(slug);
+        }
+
+        var form = document.getElementById("playerSearchForm");
+        var input = document.getElementById("playerSearchInput");
+
+        if (form && input) {
+          form.addEventListener("submit", function (event) {
+            event.preventDefault();
+
+            var targetPath = buildPlayerPath(input.value);
+            if (!targetPath) {
+              input.focus();
+              return;
+            }
+
+            window.location.href = targetPath;
+          });
+        }
+
+        window.PropAnalytics = window.PropAnalytics || {};
+        window.PropAnalytics.buildPlayerPath = buildPlayerPath;
+      })();
+    </script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

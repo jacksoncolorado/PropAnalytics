@@ -103,6 +103,25 @@ def admin_fetch_gamelogs():
     summary = fetch_and_store_gamelogs()
     return jsonify(summary)
 
+# ------------------------------------------------------------------
+# ADMIN ROUTE: POST /api/admin/backfill-player-meta
+#
+# PURPOSE:
+#   Populate missing team and position fields for players already
+#   stored in the database.
+#
+# HOW IT FITS IN:
+#   Calls backfill_player_meta() from data_fetcher.py, which uses
+#   nba_api to enrich Player records with metadata.
+#
+# After this route runs, player pages will display team and position
+# correctly instead of fallback placeholders.
+# ------------------------------------------------------------------
+@app.route('/api/admin/backfill-player-meta', methods=['POST'])
+def backfill_player_meta_route():
+    from data_fetcher import backfill_player_meta
+    return jsonify(backfill_player_meta())
+
 # --- CREATE DATABASE TABLES ---
 # This creates the actual database tables based on models.py
 with app.app_context():

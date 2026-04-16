@@ -619,3 +619,104 @@ def fetch_and_store_gamelogs() -> dict:
         "players_skipped": players_skipped,
         "errors": errors,
     }
+
+# ------------------------------------------------------------------
+# DATA FETCHER FUNCTION: backfill_player_meta()
+#
+# PURPOSE:
+#   Populate missing player metadata (team and position) for existing
+#   Player records in the database using nba_api.
+#
+# HOW IT FITS IN:
+#   This function is called by the admin route:
+#     POST /api/admin/backfill-player-meta
+#
+#   It iterates over all Player rows and:
+#     1. Skips players that already have both team and position
+#     2. Uses nba_api static lookup to find a matching NBA player ID
+#     3. Calls CommonPlayerInfo to retrieve detailed metadata
+#     4. Updates the Player table with team and position
+#
+# WHY THIS IS NEEDED:
+#   Player records created during prop ingestion often only contain
+#   names. The Odds API does not reliably provide team or position,
+#   so this function enriches the database after the fact.
+#
+# OUTPUT:
+#   Returns a summary dict:
+#     {
+#       status,
+#       players_checked,
+#       players_updated,
+#       players_skipped,
+#       errors
+#     }
+#
+# After this function runs, player pages will display team and
+# position correctly instead of placeholders.
+# ------------------------------------------------------------------
+def backfill_player_meta():
+    from models import Player, db
+    from nba_api.stats.static import players as nba_players
+    from nba_api.stats.endpoints import commonplayerinfo
+    import time
+
+    updated = 0
+    checked = 0
+    skipped = 0
+    errors = []
+
+    all_players = Player.query.all()
+
+    for player in all_players:
+        checked += 1
+
+        if player.team and player.position:
+            skipped += 1
+            continue
+
+        try:
+            matches = nba_players.find_players_by_full_name(player.name)
+
+            if not matches:
+                errors.append(f"No static match for {player.name}")
+                continue
+
+            nba_match = matches[0]
+            nba_player_id = nba_match["id"]
+
+            info = commonplayerinfo.CommonPlayerInfo(player_id=nba_player_id)
+            df = info.get_data_frames()[0]
+
+            if df.empty:
+                errors.append(f"No CommonPlayerInfo rows for {player.name}")
+                continue
+
+            row = df.iloc[0]
+
+            team_name = row.get("TEAM_NAME")
+            position = row.get("POSITION")
+
+            if team_name:
+                player.team = str(team_name)
+
+            if position:
+                player.position = str(position)
+
+            updated += 1
+
+            # Avoid rate limiting from NBA stats endpoints
+            time.sleep(0.6)
+
+        except Exception as e:
+            errors.append(f"{player.name}: {str(e)}")
+
+    db.session.commit()
+
+    return {
+        "status": "success",
+        "players_checked": checked,
+        "players_updated": updated,
+        "players_skipped": skipped,
+        "errors": errors[:25]
+    }

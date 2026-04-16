@@ -80,6 +80,29 @@ def admin_fetch_props():
     summary = fetch_and_store_props()
     return jsonify(summary)
 
+# ------------------------------------------------------------------
+# ADMIN ROUTE: POST /api/admin/fetch-gamelogs
+#
+# PURPOSE:
+#   Manual trigger to pull recent box-score stats from nba_api for
+#   every Player in the database and write them into the GameLog
+#   table (models.py).
+#
+# HOW IT FITS IN:
+#   Calls fetch_and_store_gamelogs() from data_fetcher.py, which
+#   handles all nba_api calls and database writes.  Returns the
+#   summary dict { players_updated, players_skipped, errors } as JSON.
+#
+# After this route runs, every analytics endpoint that reads GameLog
+# data (hit_rate, trend, prop_report in analytics.py) will have
+# fresh numbers to work with.
+# ------------------------------------------------------------------
+@app.route('/api/admin/fetch-gamelogs', methods=['POST'])
+def admin_fetch_gamelogs():
+    from data_fetcher import fetch_and_store_gamelogs
+    summary = fetch_and_store_gamelogs()
+    return jsonify(summary)
+
 # --- CREATE DATABASE TABLES ---
 # This creates the actual database tables based on models.py
 with app.app_context():

@@ -9,13 +9,18 @@
 # write results into the database defined in models.py.
 #
 # FUNCTIONS:
-#   fetch_nba_odds()        → returns raw NBA game odds JSON
-#                             (consumed by routes/odds.py)
-#   fetch_and_store_props() → pulls player-prop odds from the API,
-#                             stores them as PlayerProp rows in the
-#                             database, and returns a summary dict
-#                             (consumed by POST /api/admin/fetch-props
-#                             in app.py)
+#   fetch_nba_odds()            → returns raw NBA game odds JSON
+#                                 (consumed by routes/odds.py)
+#   fetch_and_store_props()     → pulls player-prop odds from the API,
+#                                 stores them as PlayerProp rows in the
+#                                 database, and returns a summary dict
+#                                 (consumed by POST /api/admin/fetch-props
+#                                 in app.py)
+#   fetch_and_store_gamelogs()  → pulls recent box-score stats from nba_api
+#                                 for every Player in the database, writes
+#                                 GameLog rows, and returns a summary dict
+#                                 (consumed by POST /api/admin/fetch-gamelogs
+#                                 in app.py)
 #
 # ENVIRONMENT VARIABLES REQUIRED:
 #   ODDS_API_KEY — your key from https://the-odds-api.com
@@ -29,7 +34,7 @@ from datetime import datetime  # used to set fetched_at on PlayerProp rows
 import requests  # used to make HTTP GET requests to external APIs
 
 from extensions import db          # SQLAlchemy instance — used for db.session
-from models import Game, Player, PlayerProp  # database models we read/write
+from models import Game, Player, PlayerProp, GameLog  # database models we read/write
 
 
 # Module-level logger.  The name mirrors the module so log messages are
@@ -436,5 +441,181 @@ def fetch_and_store_props() -> dict:
     return {
         "games_processed": games_processed,
         "props_stored": props_stored,
+        "errors": errors,
+    }
+
+
+# ------------------------------------------------------------------
+# fetch_and_store_gamelogs()
+#
+# Pulls recent box-score stats from nba_api for every Player in the
+# DB and writes GameLog rows. Called by POST /api/admin/fetch-gamelogs.
+# Returns { players_updated, players_skipped, errors }.
+# ------------------------------------------------------------------
+def fetch_and_store_gamelogs() -> dict:
+    import time
+    from nba_api.stats.endpoints import commonallplayers, playergamelog
+
+    errors = []
+    players_updated = 0
+    players_skipped = 0
+
+    # Determine the current NBA season string dynamically.
+    # NBA seasons span two calendar years (e.g. "2024-25").
+    # If we're before October, the current season started the previous year.
+    now = datetime.utcnow()
+    season_start_year = now.year if now.month >= 10 else now.year - 1
+    season_str = f"{season_start_year}-{str(season_start_year + 1)[-2:]}"
+    logger.info("Using NBA season: %s", season_str)
+
+    try:
+        all_players_response = commonallplayers.CommonAllPlayers(
+            is_only_current_season=1
+        )
+        all_players_df = all_players_response.get_data_frames()[0]
+    except Exception as e:
+        msg = f"Failed to fetch CommonAllPlayers from nba_api: {e}"
+        logger.error(msg)
+        return {"players_updated": 0, "players_skipped": 0, "errors": [msg]}
+
+    nba_name_to_id = {}
+    for _, row in all_players_df.iterrows():
+        display_name = row.get("DISPLAY_FIRST_LAST", "")
+        person_id = row.get("PERSON_ID")
+        if display_name and person_id:
+            nba_name_to_id[display_name.lower()] = int(person_id)
+
+    logger.info("Built nba_api name lookup with %d players.", len(nba_name_to_id))
+
+    db_players = Player.query.all()
+    logger.info("Found %d players in our database to process.", len(db_players))
+
+    for player in db_players:
+        nba_id = nba_name_to_id.get(player.name.lower())
+        if nba_id is None:
+            logger.warning("Could not find '%s' in nba_api — skipping.", player.name)
+            players_skipped += 1
+            continue
+
+        try:
+            time.sleep(0.6)
+            gamelog_response = playergamelog.PlayerGameLog(
+                player_id=nba_id,
+                season=season_str,
+            )
+            gamelog_df = gamelog_response.get_data_frames()[0]
+        except Exception as e:
+            msg = f"Failed to fetch game log for '{player.name}' (nba_id={nba_id}): {e}"
+            logger.error(msg)
+            errors.append(msg)
+            continue
+
+        if gamelog_df.empty:
+            logger.info("No %s game logs for '%s' — skipping.", season_str, player.name)
+            players_skipped += 1
+            continue
+
+        recent_games = gamelog_df.head(15)
+
+        games_written = 0
+        for _, game_row in recent_games.iterrows():
+            matchup = game_row.get("MATCHUP", "")
+            game_date_str = game_row.get("GAME_DATE", "")
+
+            if " vs. " in matchup:
+                parts = matchup.split(" vs. ")
+                home_team = parts[0].strip()
+                away_team = parts[1].strip()
+            elif " @ " in matchup:
+                parts = matchup.split(" @ ")
+                away_team = parts[0].strip()
+                home_team = parts[1].strip()
+            else:
+                home_team = matchup
+                away_team = "UNK"
+
+            try:
+                game_date = datetime.strptime(game_date_str, "%b %d, %Y")
+            except (ValueError, TypeError):
+                game_date = datetime.utcnow()
+
+            game_record = Game.query.filter(
+                Game.home_team == home_team,
+                Game.away_team == away_team,
+                db.func.date(Game.game_date) == game_date.date(),
+            ).first()
+
+            if not game_record:
+                game_record = Game(
+                    home_team=home_team,
+                    away_team=away_team,
+                    game_date=game_date,
+                )
+                db.session.add(game_record)
+                db.session.flush()
+
+            min_played_raw = game_row.get("MIN", 0)
+            try:
+                if isinstance(min_played_raw, str) and ":" in min_played_raw:
+                    minutes_played = int(min_played_raw.split(":")[0])
+                else:
+                    minutes_played = int(float(min_played_raw))
+            except (ValueError, TypeError):
+                minutes_played = 0
+
+            existing_log = GameLog.query.filter_by(
+                player_id=player.id,
+                game_id=game_record.id,
+            ).first()
+
+            stat_vals = {
+                "points": int(game_row.get("PTS", 0)),
+                "rebounds": int(game_row.get("REB", 0)),
+                "assists": int(game_row.get("AST", 0)),
+                "threes": int(game_row.get("FG3M", 0)),
+                "blocks": int(game_row.get("BLK", 0)),
+                "steals": int(game_row.get("STL", 0)),
+                "turnovers": int(game_row.get("TOV", 0)),
+                "minutes_played": minutes_played,
+            }
+
+            if existing_log:
+                for k, v in stat_vals.items():
+                    setattr(existing_log, k, v)
+            else:
+                new_log = GameLog(
+                    player_id=player.id,
+                    game_id=game_record.id,
+                    **stat_vals,
+                )
+                db.session.add(new_log)
+
+            games_written += 1
+
+        if games_written > 0:
+            players_updated += 1
+            logger.info(
+                "Wrote %d game logs for '%s' (nba_id=%d).",
+                games_written, player.name, nba_id,
+            )
+
+    # --- 4. COMMIT ALL CHANGES ---
+    try:
+        db.session.commit()
+        logger.info(
+            "fetch_and_store_gamelogs complete: %d updated, %d skipped, %d errors.",
+            players_updated, players_skipped, len(errors),
+        )
+    except Exception as e:
+        db.session.rollback()
+        msg = f"DB commit failed during game log ingestion: {e}"
+        logger.error(msg)
+        errors.append(msg)
+
+    # --- 5. RETURN SUMMARY ---
+    # POST /api/admin/fetch-gamelogs in app.py returns this dict as JSON.
+    return {
+        "players_updated": players_updated,
+        "players_skipped": players_skipped,
         "errors": errors,
     }

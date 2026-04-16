@@ -3,7 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PropAnalytics | Prototype Homepage</title>
+    <title>PropAnalytics | Homepage</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/custom.css') }}"
+    />
     <style>
       :root {
         --bg: #0b1118;
@@ -28,16 +32,19 @@
 
       html {
         scroll-behavior: smooth;
+        background:
+          radial-gradient(circle at top left, rgba(96, 165, 250, 0.24), transparent 25%),
+          radial-gradient(circle at 85% 15%, rgba(56, 189, 248, 0.12), transparent 18%),
+          linear-gradient(180deg, #0b1118 0%, #101823 52%, #151f2d 100%);
+        background-color: #0b1118;
+        overscroll-behavior-y: none;
       }
 
       body {
         margin: 0;
         font-family: var(--sans);
         color: var(--ink);
-        background:
-          radial-gradient(circle at top left, rgba(96, 165, 250, 0.24), transparent 25%),
-          radial-gradient(circle at 85% 15%, rgba(56, 189, 248, 0.12), transparent 18%),
-          linear-gradient(180deg, #0b1118 0%, #101823 52%, #151f2d 100%);
+        background: transparent;
       }
 
       a {
@@ -48,6 +55,13 @@
       button,
       input {
         font: inherit;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
       }
 
       .page {
@@ -99,16 +113,47 @@
         font-size: 0.84rem;
       }
 
-      .placeholder-box {
-        min-width: 270px;
-        padding: 13px 16px;
-        border: 1px dashed rgba(148, 163, 184, 0.28);
+      .header-tools {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .player-search {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 320px;
+        padding: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
         border-radius: 16px;
         background: rgba(26, 36, 50, 0.82);
+      }
+
+      .player-search input {
+        width: 100%;
+        min-height: 40px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface-strong);
+        color: var(--ink);
+      }
+
+      .player-search input::placeholder {
         color: var(--muted);
-        text-align: center;
-        font-size: 0.9rem;
-        text-transform: lowercase;
+      }
+
+      .player-search button {
+        min-height: 40px;
+        padding: 0 14px;
+        border: none;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #2563eb, #60a5fa);
+        color: #ffffff;
+        font-weight: 800;
+        cursor: pointer;
+        white-space: nowrap;
       }
 
       .hero {
@@ -125,13 +170,6 @@
 
       .hero-copy {
         padding: 30px;
-      }
-
-      h1,
-      h2,
-      h3,
-      p {
-        margin: 0;
       }
 
       .hero-copy h1 {
@@ -174,8 +212,7 @@
         gap: 8px;
       }
 
-      .field label,
-      .scope-label {
+      .field-label {
         font-size: 0.78rem;
         font-weight: 800;
         letter-spacing: 0.08em;
@@ -183,6 +220,7 @@
         color: var(--muted);
       }
 
+      .field-control,
       .field-placeholder {
         min-height: 48px;
         display: flex;
@@ -192,6 +230,16 @@
         border-radius: 14px;
         background: var(--surface-strong);
         color: var(--ink);
+      }
+
+      .field-control {
+        width: 100%;
+        font: inherit;
+      }
+
+      select.field-control,
+      input.field-control {
+        appearance: none;
       }
 
       .span-2 {
@@ -215,20 +263,25 @@
         align-items: flex-end;
       }
 
-      .placeholder-button {
+      .screener-button {
         min-height: 50px;
-        padding: 0 18px;
-        border: 1px dashed rgba(148, 163, 184, 0.28);
+        padding: 0 28px;
+        border: none;
         border-radius: 15px;
-        background: rgba(26, 36, 50, 0.82);
-        color: var(--muted);
+        background: linear-gradient(135deg, #2563eb, #60a5fa);
+        color: #ffffff;
         font-weight: 800;
-        text-transform: lowercase;
+        font-size: 0.95rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        cursor: pointer;
       }
 
-      .results-summary {
-        margin-bottom: 18px;
+      .screener-note {
+        margin-top: 14px;
         color: var(--muted);
+        font-size: 0.86rem;
+        line-height: 1.6;
       }
 
       .results-grid,
@@ -326,10 +379,19 @@
         margin-top: 14px;
       }
 
-      @media (max-width: 920px) {
+      @media (max-width: 1024px) {
         .site-header {
           flex-direction: column;
           align-items: stretch;
+        }
+
+        .header-tools {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .player-search {
+          min-width: 0;
         }
       }
 
@@ -339,7 +401,6 @@
         }
 
         .hero-copy,
-        .hero-notes,
         .panel {
           padding: 22px;
         }
@@ -358,6 +419,11 @@
         .meta {
           grid-template-columns: 1fr;
         }
+
+        .player-search {
+          flex-direction: column;
+          align-items: stretch;
+        }
       }
     </style>
   </head>
@@ -365,21 +431,35 @@
     <div class="page">
       <header class="site-header">
         <div class="brand">
-          <div class="brand-mark">?</div>
+          <a class="brand-mark" href="/" aria-label="Go to homepage">PA</a>
           <div class="brand-copy">
             <strong>PropAnalytics</strong>
-            <span>prototype homepage: prop screener + today's games</span>
+            <span>homepage: prop screener + today's games</span>
           </div>
         </div>
-        <div class="placeholder-box" aria-label="Navbar search placeholder">
-          placeholder
+
+        <div class="header-tools">
+          <form class="player-search" id="playerSearchForm">
+            <input
+              id="playerSearchInput"
+              type="search"
+              placeholder="Search players like Nikola Jokic"
+              autocomplete="off"
+            />
+            <button type="submit">Open Player</button>
+          </form>
         </div>
       </header>
 
       <main>
         <section class="hero">
           <section class="hero-copy">
-            <h1>Prototype</h1>
+            <h1>NBA Prop Screener</h1>
+            <p class="section-lead">
+              Filter player props by odds range, hit percentage, and
+              sample size. Then use today's game cards below to move
+              into the rest of the PropAnalytics flow.
+            </p>
           </section>
         </section>
 
@@ -387,88 +467,212 @@
           <div class="panel-header">
             <h2>Prop Screener</h2>
             <p class="section-lead">
-              Placeholder layout for the Sprint 1 prop screener.
+              Filter stored props and rank them by hit rate.
             </p>
           </div>
 
-          <div class="screener-form">
+          <form id="demoScreenerForm" class="screener-form">
             <div class="field span-3">
-              <div class="scope-label">Prop Type</div>
-              <div id="propType" class="field-placeholder">placeholder</div>
+              <label class="field-label" for="propTypeSelect">Prop Type</label>
+              <select id="propTypeSelect" class="field-control">
+                <option value="">All Types</option>
+                <option value="player_points">Points</option>
+                <option value="player_rebounds">Rebounds</option>
+                <option value="player_assists">Assists</option>
+                <option value="player_threes">Threes</option>
+                <option value="player_blocks">Blocks</option>
+                <option value="player_steals">Steals</option>
+                <option value="player_turnovers">Turnovers</option>
+                <option value="player_points_rebounds_assists">PTS+REB+AST</option>
+              </select>
             </div>
 
             <div class="field span-2">
-              <div class="scope-label">Min Odds</div>
-              <div id="minOdds" class="field-placeholder">placeholder</div>
+              <label class="field-label" for="minOddsInput">Min Odds</label>
+              <input
+                id="minOddsInput"
+                class="field-control"
+                type="number"
+                placeholder="-200"
+              />
             </div>
 
             <div class="field span-2">
-              <div class="scope-label">Max Odds</div>
-              <div id="maxOdds" class="field-placeholder">placeholder</div>
+              <label class="field-label" for="maxOddsInput">Max Odds</label>
+              <input
+                id="maxOddsInput"
+                class="field-control"
+                type="number"
+                placeholder="+200"
+              />
             </div>
 
             <div class="field span-2">
-              <div class="scope-label">Min Hit %</div>
-              <div id="minHit" class="field-placeholder">placeholder</div>
+              <label class="field-label" for="minHitInput">Min Hit %</label>
+              <input
+                id="minHitInput"
+                class="field-control"
+                type="number"
+                min="0"
+                max="100"
+                placeholder="50"
+              />
             </div>
 
             <div class="field span-2">
-              <div class="scope-label">Max Hit %</div>
-              <div id="maxHit" class="field-placeholder">placeholder</div>
+              <label class="field-label" for="maxHitInput">Max Hit %</label>
+              <input
+                id="maxHitInput"
+                class="field-control"
+                type="number"
+                min="0"
+                max="100"
+                placeholder="75"
+              />
             </div>
 
             <div class="field span-3">
-              <div class="scope-label">Sample Size</div>
-              <div id="sampleSize" class="field-placeholder">placeholder</div>
+              <label class="field-label" for="sampleSizeSelect">Sample Size</label>
+              <select id="sampleSizeSelect" class="field-control">
+                <option value="1">Last 1 game</option>
+                <option value="3">Last 3 games</option>
+                <option value="5">Last 5 games</option>
+                <option value="10" selected>Last 10 games</option>
+                <option value="15">Last 15 games</option>
+                <option value="20">Last 20 games</option>
+              </select>
             </div>
 
             <div class="field span-6">
-              <span class="scope-label">Coverage</span>
+              <div class="field-label">Coverage</div>
               <div class="field-placeholder">
-                placeholder
+                interactive demo controls for now
               </div>
             </div>
 
             <div class="field span-6 form-actions">
-              <div class="placeholder-button">placeholder</div>
+              <button id="screenerSubmit" class="screener-button" type="submit">
+                Run Screener
+              </button>
             </div>
-          </div>
+          </form>
+
+          <p class="screener-note">
+            This screener is interactive in the UI right now, but it is
+            currently acting as a frontend demo instead of running live filtering.
+          </p>
         </section>
 
         <section id="results" class="panel">
           <div class="panel-header">
             <h2>Filtered Results</h2>
+            <p class="section-lead">
+              Matching player props appear here after running the
+              screener.
+            </p>
           </div>
-          <div class="results-grid"></div>
+
+          <div class="results-grid">
+            <div class="empty-state">
+              <p>Choose filters above and click Run Screener to preview your selections.</p>
+            </div>
+          </div>
         </section>
 
         <section id="games" class="panel">
           <div class="panel-header">
             <h2>Today's Games</h2>
+            <p class="section-lead">
+              The homepage shows today's NBA slate as clickable game
+              cards linked to each matchup page.
+            </p>
           </div>
+
           <div class="games-grid">
             <article class="game-card">
-              <time>placeholder</time>
-              <h3>placeholder</h3>
-              <p>placeholder</p>
-              <span class="pill">placeholder</span>
+              <time>Loading...</time>
+              <h3>Waiting for today's slate</h3>
+              <p>Game cards populate from the odds feed when data is available.</p>
+              <span class="pill">live odds</span>
             </article>
             <article class="game-card">
-              <time>placeholder</time>
-              <h3>placeholder</h3>
-              <p>placeholder</p>
-              <span class="pill">placeholder</span>
+              <time>Loading...</time>
+              <h3>Checking the API feed</h3>
+              <p>This section already uses the existing games endpoint in the project.</p>
+              <span class="pill">nba</span>
             </article>
             <article class="game-card">
-              <time>placeholder</time>
-              <h3>placeholder</h3>
-              <p>placeholder</p>
-              <span class="pill">placeholder</span>
+              <time>Loading...</time>
+              <h3>Today's Games</h3>
+              <p>No local sample slate was bundled with the repo, so this stays feed-driven.</p>
+              <span class="pill">schedule</span>
             </article>
           </div>
-          <p class="status-note">placeholder</p>
+
+          <p class="status-note">Checking today's games from the odds feed...</p>
         </section>
       </main>
     </div>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        var searchForm = document.getElementById("playerSearchForm");
+        var searchInput = document.getElementById("playerSearchInput");
+
+        if (searchForm && searchInput) {
+          searchForm.addEventListener("submit", function (event) {
+            event.preventDefault();
+
+            var playerName = searchInput.value.trim();
+            if (!playerName) {
+              searchInput.focus();
+              return;
+            }
+
+            var slug = playerName.replace(/\s+/g, "-");
+            window.location.href = "/player/" + encodeURIComponent(slug);
+          });
+        }
+
+        var screenerForm = document.getElementById("demoScreenerForm");
+        var resultsGrid = document.querySelector(".results-grid");
+
+        if (!screenerForm || !resultsGrid) return;
+
+        screenerForm.addEventListener("submit", function (event) {
+          event.preventDefault();
+
+          var propType = document.getElementById("propTypeSelect");
+          var minOdds = document.getElementById("minOddsInput");
+          var maxOdds = document.getElementById("maxOddsInput");
+          var minHit = document.getElementById("minHitInput");
+          var maxHit = document.getElementById("maxHitInput");
+          var sampleSize = document.getElementById("sampleSizeSelect");
+
+          var label = "All Types";
+          if (propType && propType.selectedIndex >= 0) {
+            label = propType.options[propType.selectedIndex].text;
+          }
+
+          resultsGrid.innerHTML =
+            '<div class="result-card">' +
+              '<div class="pill-row">' +
+                '<span class="pill">Demo Preview</span>' +
+                '<span class="odds">' + (minOdds.value || "Any") + ' to ' + (maxOdds.value || "Any") + '</span>' +
+              '</div>' +
+              '<h3>' + label + '</h3>' +
+              '<div class="meta">' +
+                '<div class="meta-box"><strong>' + (minHit.value || "Any") + '%</strong><span>min hit</span></div>' +
+                '<div class="meta-box"><strong>' + (maxHit.value || "Any") + '%</strong><span>max hit</span></div>' +
+                '<div class="meta-box"><strong>' + (sampleSize.value || "10") + '</strong><span>sample</span></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="empty-state">' +
+              '<p>This is an interactive frontend demo for now. The filters are selectable and typable, but no live screener query is being run on submit.</p>' +
+            '</div>';
+        });
+      });
+    </script>
+    <script src="{{ url_for('static', filename='js/search.js') }}"></script>
   </body>
 </html>

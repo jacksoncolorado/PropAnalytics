@@ -1,0 +1,166 @@
+<<<<<<< HEAD
+=======
+
+    <script>
+    // Player detail page — fetches stats, props, trends, and game logs.
+    document.addEventListener('DOMContentLoaded', function () {
+
+      var playerName = {{ player_name | tojson }};
+      var playerId = {{ player_id | tojson }};
+      var statIndexMap = { 'points': 0, 'rebounds': 1, 'assists': 2 };
+
+      // 1. Season averages
+      fetch('/api/player/' + encodeURIComponent(playerName))
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          var statValues = document.querySelectorAll('.stat-value');
+          if (statValues.length >= 3) {
+            statValues[0].textContent = data.points_per_game || 0;
+            statValues[1].textContent = data.rebounds_per_game || 0;
+            statValues[2].textContent = data.assists_per_game || 0;
+          }
+        })
+        .catch(function (err) {
+          console.error('Error fetching player stats:', err);
+        });
+
+      if (!playerId) return;
+
+      // 2. Prop hit rates + 3. Trends (chained from props response)
+      fetch('/api/player/' + playerId + '/props')
+        .then(function (res) { return res.json(); })
+        .then(function (props) {
+          var hitCards = document.querySelectorAll('.hit-card');
+
+          var propLines = {};
+
+          props.forEach(function (prop) {
+            var statName = (prop.prop_type || '')
+              .replace('player_', '')
+              .replace('_alternate', '');
+
+            var idx = statIndexMap[statName];
+            if (idx === undefined || idx >= hitCards.length) return;
+
+            if (propLines[statName]) return;
+
+            var card = hitCards[idx];
+            var hr = prop.hit_rate;
+
+            if (hr) {
+              var hitPct = card.querySelector('.hit-pct');
+              if (hitPct) hitPct.textContent = hr.hit_rate_pct || '—%';
+
+              var hitBarFill = card.querySelector('.hit-bar-fill');
+              if (hitBarFill) {
+                var pct = hr.hit_rate !== null ? (hr.hit_rate * 100) : 0;
+                hitBarFill.style.width = pct + '%';
+              }
+
+              var metaSpans = card.querySelectorAll('.hit-meta span');
+              if (metaSpans.length >= 2) {
+                metaSpans[0].textContent = 'line: ' + (prop.line_value !== undefined ? prop.line_value : '—');
+                metaSpans[1].textContent = hr.hits + ' / ' + hr.games_used + ' games';
+              }
+            }
+
+            propLines[statName] = prop.line_value;
+          });
+
+          // 3. Fetch trends for each stat
+          var trendCards = document.querySelectorAll('.trend-card');
+
+          ['points', 'rebounds', 'assists'].forEach(function (stat) {
+            var line = propLines[stat];
+            var idx = statIndexMap[stat];
+            if (line === undefined || idx === undefined || idx >= trendCards.length) return;
+
+            var lineStr = Number(line) % 1 === 0 ? Number(line).toFixed(1) : String(line);
+            fetch('/api/analytics/prop-report/' + playerId + '/' + stat + '/' + lineStr)
+              .then(function (res) { return res.json(); })
+              .then(function (report) {
+                var card = trendCards[idx];
+                var trendData = report.trend;
+                if (!trendData) return;
+
+                var strongEls = card.querySelectorAll('.trend-box strong');
+                if (strongEls.length >= 2) {
+                  strongEls[0].textContent = trendData.avg_early !== null ? trendData.avg_early : '—';
+                  strongEls[1].textContent = trendData.avg_recent !== null ? trendData.avg_recent : '—';
+                }
+
+                var tag = card.querySelector('.tag');
+                if (tag) {
+                  var delta = trendData.delta || 0;
+                  if (trendData.avg_recent !== null && trendData.avg_early !== null) {
+                    if (trendData.avg_recent > trendData.avg_early && Math.abs(delta) >= 0.5) {
+                      tag.textContent = 'hot';
+                      tag.style.background = 'rgba(34, 197, 94, 0.22)';
+                      tag.style.color = '#4ade80';
+                    } else if (trendData.avg_recent < trendData.avg_early && Math.abs(delta) >= 0.5) {
+                      tag.textContent = 'cold';
+                      tag.style.background = 'rgba(96, 165, 250, 0.18)';
+                      tag.style.color = '#93c5fd';
+                    } else {
+                      tag.textContent = 'stable';
+                      tag.style.background = 'rgba(148, 163, 184, 0.18)';
+                      tag.style.color = '#98a7bb';
+                    }
+                  }
+                }
+              })
+              .catch(function (err) {
+                console.error('Error fetching trend for ' + stat + ':', err);
+              });
+          });
+        })
+        .catch(function (err) {
+          console.error('Error fetching player props:', err);
+        });
+
+      // 4. Game log table
+      fetch('/api/player/' + playerId + '/gamelogs')
+        .then(function (res) { return res.json(); })
+        .then(function (logs) {
+          if (!logs || logs.length === 0) return;
+
+          var emptyState = document.querySelector('.empty-state');
+          if (!emptyState) return;
+
+          var table = document.createElement('table');
+          table.className = 'log-table';
+
+          var thead = document.createElement('thead');
+          thead.innerHTML =
+            '<tr>' +
+              '<th>Date</th>' +
+              '<th>Opponent</th>' +
+              '<th>PTS</th>' +
+              '<th>REB</th>' +
+              '<th>AST</th>' +
+              '<th>MIN</th>' +
+            '</tr>';
+          table.appendChild(thead);
+
+          var tbody = document.createElement('tbody');
+          logs.forEach(function (log) {
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td>' + (log.date || '—') + '</td>' +
+              '<td>' + (log.opponent || '—') + '</td>' +
+              '<td class="mono">' + (log.points !== undefined ? log.points : '—') + '</td>' +
+              '<td class="mono">' + (log.rebounds !== undefined ? log.rebounds : '—') + '</td>' +
+              '<td class="mono">' + (log.assists !== undefined ? log.assists : '—') + '</td>' +
+              '<td class="mono">' + (log.minutes_played !== undefined ? log.minutes_played : '—') + '</td>';
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+
+          emptyState.replaceWith(table);
+        })
+        .catch(function (err) {
+          console.error('Error fetching game logs:', err);
+        });
+    });
+    </script>
+>>>>>>> bf6b15c987dd55a869afa909b0d0437794ee7314

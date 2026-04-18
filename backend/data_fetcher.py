@@ -29,7 +29,7 @@
 import os       # used to read environment variables (e.g. ODDS_API_KEY)
 import logging  # standard Python logger — used instead of print so log
                 # level and output destination can be controlled globally
-from datetime import datetime  # used to set fetched_at on PlayerProp rows
+from datetime import datetime, timezone  # used for fetched_at and game tipoff parsing
 
 import requests  # used to make HTTP GET requests to external APIs
 
@@ -261,6 +261,9 @@ def _fetch_event_props(event_id: str, markets: str, api_key: str) -> dict | None
 #     errors          : list[str] — human-readable error messages
 # ------------------------------------------------------------------
 def fetch_and_store_props() -> dict:
+    # Clear stale props before fetching fresh ones
+    PlayerProp.query.delete()
+    db.session.commit()
     # --- 1. VALIDATE THE API KEY ---
     api_key = os.getenv('ODDS_API_KEY')
     if not api_key:
@@ -303,6 +306,19 @@ def fetch_and_store_props() -> dict:
         home_team = game_obj.get("home_team", "Unknown")
         away_team = game_obj.get("away_team", "Unknown")
 
+        # Parse the real tipoff time from The Odds API ("commence_time" is ISO 8601, e.g. "2026-04-18T23:30:00Z").
+        commence_str = game_obj.get("commence_time")
+        if commence_str:
+            try:
+                # Replace trailing Z with +00:00 for fromisoformat compatibility.
+                parsed_tipoff = datetime.fromisoformat(commence_str.replace("Z", "+00:00"))
+                # Strip tzinfo so it stores as naive UTC (matches the rest of the codebase).
+                parsed_tipoff = parsed_tipoff.astimezone(timezone.utc).replace(tzinfo=None)
+            except ValueError:
+                parsed_tipoff = datetime.utcnow()
+        else:
+            parsed_tipoff = datetime.utcnow()
+
         # --- 3a. UPSERT THE GAME ROW ---
         # Look up by odds_event_id to avoid creating duplicate Game rows
         # for the same real-world game.  If found, update mutable fields
@@ -311,15 +327,16 @@ def fetch_and_store_props() -> dict:
         game_record = Game.query.filter_by(odds_event_id=event_id).first()
         if game_record:
             # Update existing Game record with latest data from the API
-            # so we don't leave stale metadata in the database.
+            # so we don't leave stale metadata (including game_date) in the database.
             game_record.home_team = home_team
             game_record.away_team = away_team
+            game_record.game_date = parsed_tipoff
         else:
             game_record = Game(
                 home_team=home_team,
                 away_team=away_team,
                 odds_event_id=event_id,
-                game_date=datetime.utcnow(),
+                game_date=parsed_tipoff,
             )
             db.session.add(game_record)
         # Flush so game_record.id is available for PlayerProp FK below.
@@ -671,7 +688,7 @@ def backfill_player_meta():
     for player in all_players:
         checked += 1
 
-        if player.team and player.position:
+        if player.team and player.position and player.nba_player_id and player.nba_team_id:
             skipped += 1
             continue
 
@@ -694,14 +711,23 @@ def backfill_player_meta():
 
             row = df.iloc[0]
 
-            team_name = row.get("TEAM_NAME")
+            team_city = row.get("TEAM_CITY", "")
+            team_name = row.get("TEAM_NAME", "")
             position = row.get("POSITION")
+            team_id = row.get("TEAM_ID")
 
-            if team_name:
+            if team_city and team_name:
+                player.team = f"{team_city} {team_name}"
+            elif team_name:
                 player.team = str(team_name)
 
             if position:
                 player.position = str(position)
+
+            player.nba_player_id = nba_player_id
+
+            if team_id:
+                player.nba_team_id = int(team_id)
 
             updated += 1
 

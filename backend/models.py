@@ -70,6 +70,8 @@ class Player(db.Model):
     name = db.Column(db.String(100), nullable=False)
     team = db.Column(db.String(50))
     position = db.Column(db.String(20))
+    nba_player_id = db.Column(db.Integer, nullable=True)
+    nba_team_id = db.Column(db.Integer, nullable=True)
 
     # --- RELATIONSHIPS ---
     # One player has many box-score logs and many prop lines.

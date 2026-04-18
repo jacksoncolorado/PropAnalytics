@@ -4,19 +4,15 @@
 # ============================================================
 
 # --- IMPORTS ---
-from flask import Flask, jsonify  # web framework — handles URLs and pages; jsonify for JSON responses
-from extensions import db  # database connection
-from dotenv import load_dotenv  # read secret keys from the .env file
-import os  # reading environment variables
+from flask import Flask, jsonify
+from extensions import db
+from dotenv import load_dotenv
+import os
 
 # --- LOAD SECRET KEYS ---
-# NEVER pushed to GitHub — each person has their own copy locally
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # --- CREATE THE FLASK APP ---
-# creates the main app object
-# template_folder → finds HTML files
-# static_folder → finds our CSS/JS files
 import pathlib
 BASE_DIR = pathlib.Path(__file__).parent.parent
 
@@ -27,110 +23,101 @@ app = Flask(
 )
 
 # --- DATABASE CONFIGURATION ---
-# tells Flask to use a simple SQLite database file called nba.db
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///nba.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# This is a secret key Flask uses for security (sessions, etc.)
-# It reads from your .env file — add SECRET_KEY=anyrandomstring to your .env
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-fallback-key')
 
 # --- CONNECT THE DATABASE TO THE APP ---
-# db was created in extensions.py — here we attach it to our app
 db.init_app(app)
 
 # --- LOAD ALL ROUTES ---
-# Routes are the URLs of our app (e.g. /player, /search, /screener)
-# They are defined in separate files inside the /backend/routes/ folder
-# import here when you create new routes
 from routes.player import bp as player_bp
 from routes.analytics import bp as analytics_bp
-# odds_bp adds the /api/odds/games and /api/odds/props/<event_id> endpoints,
-# which fetch live NBA betting data (game lines and player props) from
-# The Odds API.  See backend/routes/odds.py and backend/data_fetcher.py.
 from routes.odds import odds_bp
-# screener_bp adds GET /api/screener/props — the prop screener endpoint
-# that filters stored PlayerProp rows by odds/stat, calculates hit rates
-# using analytics.py, and returns a ranked JSON list to the frontend.
-# See backend/routes/screener.py.
 from routes.screener import screener_bp
+from routes.game import bp as game_bp
+
 app.register_blueprint(player_bp)
 app.register_blueprint(analytics_bp)
 app.register_blueprint(odds_bp)
 app.register_blueprint(screener_bp)
+app.register_blueprint(game_bp)
 
-# ------------------------------------------------------------------
-# ADMIN ROUTE: POST /api/admin/fetch-props
-#
-# PURPOSE:
-#   Manual trigger to pull fresh player-prop odds from The Odds API
-#   and store them in the PlayerProp table (models.py).
-#
-# HOW IT FITS IN:
-#   Calls fetch_and_store_props() from data_fetcher.py, which handles
-#   all API calls and database writes.  Returns the summary dict
-#   { games_processed, props_stored, errors } as JSON.
-#
-# After this route runs, the screener endpoint
-# (GET /api/screener/props) will have fresh data to work with.
-# ------------------------------------------------------------------
+# --- ADMIN ROUTES ---
 @app.route('/api/admin/fetch-props', methods=['POST'])
 def admin_fetch_props():
     from data_fetcher import fetch_and_store_props
-    summary = fetch_and_store_props()
-    return jsonify(summary)
+    return jsonify(fetch_and_store_props())
 
-# ------------------------------------------------------------------
-# ADMIN ROUTE: POST /api/admin/fetch-gamelogs
-#
-# PURPOSE:
-#   Manual trigger to pull recent box-score stats from nba_api for
-#   every Player in the database and write them into the GameLog
-#   table (models.py).
-#
-# HOW IT FITS IN:
-#   Calls fetch_and_store_gamelogs() from data_fetcher.py, which
-#   handles all nba_api calls and database writes.  Returns the
-#   summary dict { players_updated, players_skipped, errors } as JSON.
-#
-# After this route runs, every analytics endpoint that reads GameLog
-# data (hit_rate, trend, prop_report in analytics.py) will have
-# fresh numbers to work with.
-# ------------------------------------------------------------------
 @app.route('/api/admin/fetch-gamelogs', methods=['POST'])
 def admin_fetch_gamelogs():
     from data_fetcher import fetch_and_store_gamelogs
-    summary = fetch_and_store_gamelogs()
-    return jsonify(summary)
+    return jsonify(fetch_and_store_gamelogs())
 
-# ------------------------------------------------------------------
-# ADMIN ROUTE: POST /api/admin/backfill-player-meta
-#
-# PURPOSE:
-#   Populate missing team and position fields for players already
-#   stored in the database.
-#
-# HOW IT FITS IN:
-#   Calls backfill_player_meta() from data_fetcher.py, which uses
-#   nba_api to enrich Player records with metadata.
-#
-# After this route runs, player pages will display team and position
-# correctly instead of fallback placeholders.
-# ------------------------------------------------------------------
 @app.route('/api/admin/backfill-player-meta', methods=['POST'])
 def backfill_player_meta_route():
     from data_fetcher import backfill_player_meta
     return jsonify(backfill_player_meta())
 
 # --- CREATE DATABASE TABLES ---
-# This creates the actual database tables based on models.py
 with app.app_context():
     db.create_all()
     print("Database tables created (or already exist)")
 
+# --- AUTO-INIT ON STARTUP ---
+def _startup_init():
+    from datetime import date
+    from models import PlayerProp, Player, GameLog
+    from data_fetcher import fetch_and_store_props, fetch_and_store_gamelogs, backfill_player_meta
+
+    with app.app_context():
+        # 1. Check if props exist for today
+        today = date.today()
+        recent_prop = PlayerProp.query.order_by(PlayerProp.fetched_at.desc()).first()
+        props_are_fresh = (
+            recent_prop and
+            recent_prop.fetched_at and
+            recent_prop.fetched_at.date() == today
+        )
+
+        if not props_are_fresh:
+            print("No props for today — fetching from Odds API...")
+            props_summary = fetch_and_store_props()
+            print(f"Props: {props_summary['props_stored']} stored, {len(props_summary['errors'])} errors")
+        else:
+            print("Props already fresh for today — skipping fetch.")
+
+        # 2. Check if gamelogs exist
+        log_count = GameLog.query.count()
+        if log_count == 0:
+            print("No game logs found — fetching from nba_api (this takes a few minutes)...")
+            logs_summary = fetch_and_store_gamelogs()
+            print(f"Gamelogs: {logs_summary['players_updated']} players updated")
+        else:
+            print(f"Game logs exist ({log_count} rows) — skipping fetch.")
+
+        # 3. Check if player metadata needs backfill
+        missing_meta = Player.query.filter(
+            (Player.team == None) | (Player.nba_player_id == None)
+        ).count()
+        if missing_meta > 0:
+            print(f"{missing_meta} players missing metadata — running backfill...")
+            meta_summary = backfill_player_meta()
+            print(f"Backfill: {meta_summary['players_updated']} updated")
+        else:
+            print("Player metadata complete — skipping backfill.")
+
+        print("Startup init complete. App is ready.")
+
+import threading
+import os
+if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+    init_thread = threading.Thread(target=_startup_init, daemon=True)
+    init_thread.start()
+
 # --- START SERVER ---
-# only runs when you execute this file directly
 if __name__ == '__main__':
-    print("Starting NBA Prop Analytics app...")
+    print("Starting NBA Prop Analytics...")
+    print("Data will auto-fetch in the background if needed.")
     print("Open your browser and go to the URL Replit gives you")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)

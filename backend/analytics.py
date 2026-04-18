@@ -18,7 +18,7 @@
 #   GameLog rows in models.py, populated externally (e.g. via nba_api ingestion).
 # ============================================================
 
-from models import GameLog, Player
+from models import GameLog, Player, Game
 from sqlalchemy import desc
 
 
@@ -60,8 +60,9 @@ def _get_game_logs(player_id: int, stat: str, n_games: int = 20) -> list[float]:
     # so the caller gets oldest-first (easier for trend analysis).
     logs = (
         GameLog.query
-        .filter_by(player_id=player_id)
-        .order_by(desc(GameLog.id))
+        .join(Game, GameLog.game_id == Game.id)
+        .filter(GameLog.player_id == player_id)
+        .order_by(desc(Game.game_date))
         .limit(n_games)
         .all()
     )

@@ -22,8 +22,8 @@ import logging
 
 from flask import Blueprint, jsonify, request  # request gives us query params
 
-from datetime import datetime, timezone
 from models import PlayerProp, Player, Game
+from datetime import datetime, timedelta
 from analytics import hit_rate, combo_hit_rate, trend # analytics functions
 
 
@@ -180,7 +180,18 @@ def get_screener_props():
     # --- 2. QUERY PLAYER PROPS FROM THE DATABASE ---
     # Start with a base query on the PlayerProp table (defined in models.py,
     # populated by fetch_and_store_props() in data_fetcher.py).
-    query = PlayerProp.query
+    # Only return props for today's games (within next 24hrs, Mountain Time)
+    mountain_offset = timedelta(hours=-6)
+    now_mountain = datetime.utcnow() + mountain_offset
+    today_mountain = now_mountain.date()
+
+    today_game_ids = [
+        g.id for g in Game.query.all()
+        if g.game_date and (g.game_date + mountain_offset).date() == today_mountain
+        and g.odds_event_id is not None
+    ]
+
+    query = PlayerProp.query.filter(PlayerProp.game_id.in_(today_game_ids))
 
     # Filter by the odds column that matches the requested side.
     # "over" → filter on over_odds;  "under" → filter on under_odds.

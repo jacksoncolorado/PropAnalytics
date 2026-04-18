@@ -431,151 +431,76 @@
     <div class="page">
       <header class="site-header">
         <div class="brand">
-          <a class="brand-mark" href="/" aria-label="Go to homepage">PA</a>
           <div class="brand-copy">
-            <strong>PropAnalytics</strong>
-            <span>homepage: prop screener + today's games</span>
+            <strong style="font-size:1.4rem;">PropAnalytics</strong>
+            <span>NBA prop analytics</span>
           </div>
         </div>
-
         <div class="header-tools">
-          <form class="player-search" id="playerSearchForm">
-            <input
-              id="playerSearchInput"
-              type="search"
-              placeholder="Search players like Nikola Jokic"
-              autocomplete="off"
-            />
-            <button type="submit">Open Player</button>
-          </form>
+          <div class="player-search" id="playerDropdownNav">
+            <select id="teamDropdown" class="field-control" style="min-width:180px;min-height:40px;padding:0 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-strong);color:var(--ink);font:inherit;">
+              <option value="">Select Team</option>
+            </select>
+            <select id="playerDropdown" class="field-control" style="min-width:180px;min-height:40px;padding:0 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-strong);color:var(--ink);font:inherit;">
+              <option value="">Select Player</option>
+            </select>
+            <button id="openPlayerBtn" style="min-height:40px;padding:0 18px;border:none;border-radius:12px;background:linear-gradient(135deg,#2563eb,#60a5fa);color:#fff;font-weight:800;cursor:pointer;white-space:nowrap;">Open Player</button>
+          </div>
         </div>
       </header>
 
       <main>
-        <section class="hero">
-          <section class="hero-copy">
-            <h1>NBA Prop Screener</h1>
-            <p class="section-lead">
-              Filter player props by odds range, hit percentage, and
-              sample size. Then use today's game cards below to move
-              into the rest of the PropAnalytics flow.
-            </p>
-          </section>
-        </section>
-
         <section id="screener" class="panel">
           <div class="panel-header">
             <h2>Prop Screener</h2>
             <p class="section-lead">
-              Filter stored props and rank them by hit rate.
+              Filter today's props by type, odds, and hit rate. Results are grouped by player — expand any player to see their matching props and game charts.
             </p>
           </div>
 
-          <form id="demoScreenerForm" class="screener-form">
+          <div class="screener-form">
             <div class="field span-3">
               <label class="field-label" for="propTypeSelect">Prop Type</label>
-              <select id="propTypeSelect" class="field-control">
-                <option value="">All Types</option>
-                <option value="player_points">Points</option>
-                <option value="player_rebounds">Rebounds</option>
-                <option value="player_assists">Assists</option>
-                <option value="player_threes">Threes</option>
-                <option value="player_blocks">Blocks</option>
-                <option value="player_steals">Steals</option>
-                <option value="player_turnovers">Turnovers</option>
-                <option value="player_points_rebounds_assists">PTS+REB+AST</option>
-              </select>
+              <select id="propTypeSelect" class="field-control"></select>
             </div>
-
             <div class="field span-2">
               <label class="field-label" for="minOddsInput">Min Odds</label>
-              <input
-                id="minOddsInput"
-                class="field-control"
-                type="number"
-                placeholder="-200"
-              />
+              <input id="minOddsInput" class="field-control" type="number" placeholder="-200"/>
             </div>
-
             <div class="field span-2">
               <label class="field-label" for="maxOddsInput">Max Odds</label>
-              <input
-                id="maxOddsInput"
-                class="field-control"
-                type="number"
-                placeholder="+200"
-              />
+              <input id="maxOddsInput" class="field-control" type="number" placeholder="+300"/>
             </div>
-
             <div class="field span-2">
-              <label class="field-label" for="minHitInput">Min Hit %</label>
-              <input
-                id="minHitInput"
-                class="field-control"
-                type="number"
-                min="0"
-                max="100"
-                placeholder="50"
-              />
+              <label class="field-label" for="minHitSelect">Min Hit %</label>
+              <select id="minHitSelect" class="field-control">
+                <option value="0">Any</option>
+                <option value="30">30%+</option>
+                <option value="40">40%+</option>
+                <option value="60">60%+</option>
+                <option value="80">80%+</option>
+                <option value="100">100%</option>
+              </select>
             </div>
-
-            <div class="field span-2">
-              <label class="field-label" for="maxHitInput">Max Hit %</label>
-              <input
-                id="maxHitInput"
-                class="field-control"
-                type="number"
-                min="0"
-                max="100"
-                placeholder="75"
-              />
-            </div>
-
             <div class="field span-3">
               <label class="field-label" for="sampleSizeSelect">Sample Size</label>
               <select id="sampleSizeSelect" class="field-control">
-                <option value="1">Last 1 game</option>
-                <option value="3">Last 3 games</option>
                 <option value="5">Last 5 games</option>
                 <option value="10" selected>Last 10 games</option>
                 <option value="15">Last 15 games</option>
-                <option value="20">Last 20 games</option>
               </select>
             </div>
-
-            <div class="field span-6">
-              <div class="field-label">Coverage</div>
-              <div class="field-placeholder">
-                interactive demo controls for now
-              </div>
+            <div class="field span-12 form-actions" style="grid-column:span 12;">
+              <button id="screenerSubmit" class="screener-button" type="button">Run Screener</button>
             </div>
-
-            <div class="field span-6 form-actions">
-              <button id="screenerSubmit" class="screener-button" type="submit">
-                Run Screener
-              </button>
-            </div>
-          </form>
-
-          <p class="screener-note">
-            This screener is interactive in the UI right now, but it is
-            currently acting as a frontend demo instead of running live filtering.
-          </p>
-        </section>
-
-        <section id="results" class="panel">
-          <div class="panel-header">
-            <h2>Filtered Results</h2>
-            <p class="section-lead">
-              Matching player props appear here after running the
-              screener.
-            </p>
           </div>
 
-          <div class="results-grid">
-            <div class="empty-state">
-              <p>Choose filters above and click Run Screener to preview your selections.</p>
-            </div>
+          <div id="screenerTimestamp" style="color:#98a7bb;font-size:0.82rem;margin-top:12px;"></div>
+
+          <div id="sortBar" style="display:none;margin-top:14px;"></div>
+
+          <div id="results" style="margin-top:18px;">
+            <div class="empty-state"><p>Set filters above and click Run Screener.</p></div>
           </div>
         </section>
 
@@ -616,63 +541,66 @@
 
     <script>
       document.addEventListener("DOMContentLoaded", function () {
-        var searchForm = document.getElementById("playerSearchForm");
-        var searchInput = document.getElementById("playerSearchInput");
+        // Load today's teams/players into header dropdowns
+        var teamDrop = document.getElementById('teamDropdown');
+        var playerDrop = document.getElementById('playerDropdown');
+        var openBtn = document.getElementById('openPlayerBtn');
+        var teamsData = [];
 
-        if (searchForm && searchInput) {
-          searchForm.addEventListener("submit", function (event) {
-            event.preventDefault();
+        fetch('/api/players/today')
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            teamsData = data;
+            data.forEach(function(t){
+              var o = document.createElement('option');
+              o.value = t.team;
+              o.textContent = t.team;
+              teamDrop.appendChild(o);
+            });
+          })
+          .catch(function(){});
 
-            var playerName = searchInput.value.trim();
-            if (!playerName) {
-              searchInput.focus();
-              return;
-            }
-
-            var slug = playerName.replace(/\s+/g, "-");
-            window.location.href = "/player/" + encodeURIComponent(slug);
+        teamDrop.addEventListener('change', function(){
+          playerDrop.innerHTML = '<option value="">Select Player</option>';
+          var team = teamsData.find(function(t){ return t.team === teamDrop.value; });
+          if (!team) return;
+          team.players.forEach(function(p){
+            var o = document.createElement('option');
+            o.value = p.name;
+            o.textContent = p.name;
+            playerDrop.appendChild(o);
           });
-        }
+        });
 
-        var screenerForm = document.getElementById("demoScreenerForm");
-        var resultsGrid = document.querySelector(".results-grid");
+        openBtn.addEventListener('click', function(){
+          var name = playerDrop.value;
+          if (!name) return;
+          window.location.href = '/player/' + name.replace(/\s+/g, '-');
+        });
 
-        if (!screenerForm || !resultsGrid) return;
-
-        screenerForm.addEventListener("submit", function (event) {
-          event.preventDefault();
-
-          var propType = document.getElementById("propTypeSelect");
-          var minOdds = document.getElementById("minOddsInput");
-          var maxOdds = document.getElementById("maxOddsInput");
-          var minHit = document.getElementById("minHitInput");
-          var maxHit = document.getElementById("maxHitInput");
-          var sampleSize = document.getElementById("sampleSizeSelect");
-
-          var label = "All Types";
-          if (propType && propType.selectedIndex >= 0) {
-            label = propType.options[propType.selectedIndex].text;
-          }
-
-          resultsGrid.innerHTML =
-            '<div class="result-card">' +
-              '<div class="pill-row">' +
-                '<span class="pill">Demo Preview</span>' +
-                '<span class="odds">' + (minOdds.value || "Any") + ' to ' + (maxOdds.value || "Any") + '</span>' +
-              '</div>' +
-              '<h3>' + label + '</h3>' +
-              '<div class="meta">' +
-                '<div class="meta-box"><strong>' + (minHit.value || "Any") + '%</strong><span>min hit</span></div>' +
-                '<div class="meta-box"><strong>' + (maxHit.value || "Any") + '%</strong><span>max hit</span></div>' +
-                '<div class="meta-box"><strong>' + (sampleSize.value || "10") + '</strong><span>sample</span></div>' +
-              '</div>' +
-            '</div>' +
-            '<div class="empty-state">' +
-              '<p>This is an interactive frontend demo for now. The filters are selectable and typable, but no live screener query is being run on submit.</p>' +
-            '</div>';
+        // Populate prop type dropdown
+        var propTypeSel = document.getElementById('propTypeSelect');
+        [
+          {value:'', text:'All Types'},
+          {value:'player_points', text:'Points'},
+          {value:'player_rebounds', text:'Rebounds'},
+          {value:'player_assists', text:'Assists'},
+          {value:'player_threes', text:'Threes'},
+          {value:'player_blocks', text:'Blocks'},
+          {value:'player_steals', text:'Steals'},
+          {value:'player_turnovers', text:'Turnovers'},
+          {value:'player_points_rebounds_assists', text:'PTS+REB+AST'},
+          {value:'player_points_rebounds', text:'PTS+REB'},
+          {value:'player_points_assists', text:'PTS+AST'},
+          {value:'player_rebounds_assists', text:'REB+AST'},
+        ].forEach(function(opt){
+          var o = document.createElement('option');
+          o.value = opt.value; o.textContent = opt.text;
+          propTypeSel.appendChild(o);
         });
       });
     </script>
+    <script src="{{ url_for('static', filename='js/screener.js') }}"></script>
     <script src="{{ url_for('static', filename='js/search.js') }}"></script>
   </body>
 </html>

@@ -12,6 +12,8 @@
 from flask import Blueprint, render_template, jsonify
 from models import Player, GameLog, PlayerProp, Game
 from sqlalchemy import desc
+from extensions import db
+from datetime import datetime, date, timezone
 
 bp = Blueprint('player', __name__)
 
@@ -54,6 +56,10 @@ def get_player(player_name):
 
     return jsonify({
         "name": player.name,
+        "team": player.team,
+        "position": player.position,
+        "nba_player_id": player.nba_player_id,
+        "nba_team_id": player.nba_team_id,
         "points_per_game": ppg,
         "rebounds_per_game": rpg,
         "assists_per_game": apg,
@@ -69,9 +75,11 @@ def player_page(player_name):
 
     player_id = player.id if player else None
 
+    display_name = player.name if player else player_name.replace("-", " ").title()
+
     return render_template(
         'player.html',
-        player_name=player_name,
+        player_name=display_name,
         player_id=player_id,
     )
 
@@ -104,6 +112,10 @@ def get_player_gamelogs(player_id):
             "points": log.points,
             "rebounds": log.rebounds,
             "assists": log.assists,
+            "threes": log.threes,
+            "blocks": log.blocks,
+            "steals": log.steals,
+            "turnovers": log.turnovers,
             "minutes_played": log.minutes_played,
         })
 
@@ -142,3 +154,59 @@ def get_player_props(player_id):
         })
 
     return jsonify(results)
+
+@bp.route('/api/players/today')
+def get_players_today():
+    """Return players with props today grouped by team, for header dropdowns."""
+    from data_fetcher import fetch_nba_odds
+    from datetime import date
+
+    # Get today's teams from the Odds API
+    odds_data = fetch_nba_odds()
+    today_str = date.today().isoformat()
+    today_teams = set()
+
+    if odds_data:
+        from datetime import datetime, timezone, timedelta
+        mountain_offset = timedelta(hours=-6)  # MDT (Mountain Daylight Time)
+        now_mountain = datetime.now(timezone.utc) + mountain_offset
+        today_mountain = now_mountain.date()
+        for game in odds_data:
+            commence = game.get('commence_time', '')
+            if not commence:
+                continue
+            try:
+                game_dt_utc = datetime.strptime(commence[:19], '%Y-%m-%dT%H:%M:%S')
+                game_dt_mountain = game_dt_utc + mountain_offset
+                if game_dt_mountain.date() == today_mountain:
+                    today_teams.add(game.get('home_team'))
+                    today_teams.add(game.get('away_team'))
+            except ValueError:
+                continue
+
+    # Filter players to only those on today's teams
+    props_today = PlayerProp.query.all()
+    player_ids = list(set(p.player_id for p in props_today))
+    players = Player.query.filter(Player.id.in_(player_ids)).all()
+
+    teams = {}
+    for player in players:
+        team = player.team or 'Unknown'
+        if team not in today_teams:
+            continue
+        if team not in teams:
+            teams[team] = []
+        teams[team].append({
+            'id': player.id,
+            'name': player.name,
+        })
+
+    for team in teams:
+        teams[team].sort(key=lambda p: p['name'])
+
+    result = sorted([
+        {'team': team, 'players': players_list}
+        for team, players_list in teams.items()
+    ], key=lambda t: t['team'])
+
+    return jsonify(result)

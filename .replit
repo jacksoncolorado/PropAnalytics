@@ -35,3 +35,7 @@ waitForPort = 5000
 
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[deployment]
+deploymentTarget = "cloudrun"
+run = ["sh", "-c", "cd backend && python app.py"]

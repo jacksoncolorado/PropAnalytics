@@ -472,6 +472,7 @@ def fetch_and_store_props() -> dict:
 def fetch_and_store_gamelogs() -> dict:
     import time
     from nba_api.stats.endpoints import commonallplayers, playergamelog
+    import pandas as pd
 
     errors = []
     players_updated = 0
@@ -516,16 +517,25 @@ def fetch_and_store_gamelogs() -> dict:
 
         try:
             time.sleep(0.6)
-            gamelog_response = playergamelog.PlayerGameLog(
+            playoff_df = playergamelog.PlayerGameLog(
                 player_id=nba_id,
                 season=season_str,
-            )
-            gamelog_df = gamelog_response.get_data_frames()[0]
+                season_type_all_star='Playoffs',
+            ).get_data_frames()[0]
+
+            time.sleep(0.6)
+            regular_df = playergamelog.PlayerGameLog(
+                player_id=nba_id,
+                season=season_str,
+                season_type_all_star='Regular Season',
+            ).get_data_frames()[0]
+
+            gamelog_df = pd.concat([playoff_df, regular_df], ignore_index=True)
         except Exception as e:
-            msg = f"Failed to fetch game log for '{player.name}' (nba_id={nba_id}): {e}"
-            logger.error(msg)
-            errors.append(msg)
-            continue
+                msg = f"Failed to fetch game log for '{player.name}' (nba_id={nba_id}): {e}"
+                logger.error(msg)
+                errors.append(msg)
+                continue
 
         if gamelog_df.empty:
             logger.info("No %s game logs for '%s' — skipping.", season_str, player.name)

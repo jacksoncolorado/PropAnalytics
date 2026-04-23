@@ -67,7 +67,7 @@ with app.app_context():
 # --- AUTO-INIT ON STARTUP ---
 def _startup_init():
     from datetime import date
-    from models import PlayerProp, Player, GameLog
+    from models import PlayerProp, Player, GameLog, Game
     from data_fetcher import fetch_and_store_props, fetch_and_store_gamelogs, backfill_player_meta
 
     with app.app_context():
@@ -89,7 +89,10 @@ def _startup_init():
 
         # 2. Check if gamelogs exist
         log_count = GameLog.query.count()
-        if log_count == 0:
+        from datetime import timedelta
+        latest_log = GameLog.query.join(Game).order_by(Game.game_date.desc()).first()
+        stale = (not latest_log) or (date.today() - latest_log.game.game_date.date() > timedelta(days=2))
+        if stale:
             print("No game logs found — fetching from nba_api (this takes a few minutes)...")
             logs_summary = fetch_and_store_gamelogs()
             print(f"Gamelogs: {logs_summary['players_updated']} players updated")

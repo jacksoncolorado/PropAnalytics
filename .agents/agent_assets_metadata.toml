@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "7zVQugVCaF8pi-XxSrvN1"
+uri = "file://test_plans.pdf"
+type = "pdf"
+title = "Software Test Plans — Optimized Statistical NBA Tool"

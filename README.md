@@ -1,118 +1,115 @@
-We are building an NBA prop analytics Flask app called PropAnalytics. Read the README.md in the project root for full context on the app, database schema, and prop markets before doing anything.
-The backend lives in the backend/ folder. Key files: app.py, models.py, extensions.py, analytics.py, data_fetcher.py, and routes/.
-Complete the following tasks in order. Do not modify any file not explicitly mentioned. Do not auto-commit anything.
+# Optimized Statistical NBA Tool
 
-TASK 1 — Update models.py
-Make these changes and nothing else:
+A Flask-based web application that helps NBA fans evaluate single-game player prop bets by combining live betting odds with historical performance data. The app pulls current player props from The Odds API, fetches recent game logs from the public NBA Stats endpoints, and computes a hit rate (how often a player has cleared a given prop line over their last N games) plus a short-term trend direction. Results are surfaced through three pages: a homepage prop screener with filterable results, a per-game view showing all props for both teams, and a per-player detail page with charts of recent stat lines.
 
-Add these columns to GameLog: threes (Integer, default 0), blocks (Integer, default 0), steals (Integer, default 0), turnovers (Integer, default 0)
-Replace the existing PlayerProp model entirely with this new schema:
+> **Note for the grader:** The live deployment URL may be inactive at the time of grading. Replit free deployments sleep when not accessed and the Odds API key may have rotated. The instructions below cover everything needed to run the project locally from a clean clone.
 
-id — Integer, primary key
-player_id — Integer, FK to players.id, not null
-game_id — Integer, FK to games.id, not null
-prop_type — String(100) — full Odds API market key e.g. "player_points_alternate"
-line_value — Float — the prop line e.g. 25.5
-over_odds — Integer — American odds for over
-under_odds — Integer — American odds for under
-is_alternate — Boolean, default False
-bookmaker — String(50) — e.g. "draftkings"
-fetched_at — DateTime, default datetime.utcnow
+---
 
-Add odds_event_id (String(100), nullable=True) to the Game model so we can match Odds API event IDs to our game records.
+## Local Setup
 
+### 1. Prerequisites
 
-TASK 2 — Update analytics.py (root level, not routes/analytics.py)
-Expand the valid_stats set in _get_game_logs() from:
-pythonvalid_stats = {'points', 'rebounds', 'assists'}
-to:
-pythonvalid_stats = {'points', 'rebounds', 'assists', 'threes', 'blocks', 'steals', 'turnovers'}
-Also add a new function combo_hit_rate(player_id, stats, line, n_games=20) that:
+- **Python 3.11 or newer** (`python3 --version` to check)
+- **pip** (bundled with modern Python installs)
+- **git**
 
-Accepts stats as a list e.g. ['points', 'rebounds', 'assists']
-Fetches game logs for each stat separately
-Sums them per game to get a combined value per game
-Calculates hit rate against the line the same way hit_rate() does
-Returns the same dict structure as hit_rate() but with stat set to "+".join(stats)
+### 2. Clone the repository
 
+```bash
+git clone <repository-url>
+cd <repository-folder>
+```
 
-TASK 3 — Update data_fetcher.py
-Add a new function fetch_and_store_props() that does the following inside the Flask app context:
+### 3. Install dependencies
 
-Call The Odds API games endpoint to get today's NBA games:
+From the project root:
 
-GET https://api.the-odds-api.com/v4/sports/basketball_nba/odds
-params: regions=us, markets=h2h, oddsFormat=american, apiKey=ODDS_API_KEY
+```bash
+pip install -r requirements.txt
+```
 
-For each game returned, for each of these prop market groups (make one API call per group per game to conserve credits):
+This installs Flask, Flask-SQLAlchemy, the `nba_api` client, `requests`, and `python-dotenv`.
 
-Group A (standard props — one call):
-player_points,player_rebounds,player_assists,player_threes,player_blocks,player_steals,player_turnovers,player_double_double
-Group B (combo props — one call):
-player_points_rebounds_assists,player_points_rebounds,player_points_assists,player_rebounds_assists
-Group C (alternate props — one call):
-player_points_alternate,player_rebounds_alternate,player_assists_alternate,player_threes_alternate,player_blocks_alternate,player_steals_alternate,player_turnovers_alternate
-Group D (alternate combo props — one call):
-player_points_rebounds_assists_alternate,player_points_rebounds_alternate,player_points_assists_alternate,player_rebounds_assists_alternate
-Each group call hits:
-GET https://api.the-odds-api.com/v4/sports/basketball_nba/events/{event_id}/odds
-params: regions=us, markets={group}, oddsFormat=american, apiKey=ODDS_API_KEY
+### 4. Obtain API keys
 
-For each game, create or update a Game record using odds_event_id to avoid duplicates.
-For each bookmaker, for each market, for each outcome pair (over/under), create a PlayerProp record:
+The app uses two upstream data sources. Only one of them requires a key.
 
+| Source | Used for | Key required? | Where to obtain |
+|---|---|---|---|
+| **NBA Stats API** (via `nba_api` package) | Player metadata and historical game logs | **No** — uses the public `stats.nba.com` endpoints | n/a |
+| **The Odds API** | Live game odds and player-prop lines | **Yes** | Sign up for a free account at <https://the-odds-api.com> — the free tier returns 500 requests/month, which is sufficient for grading |
 
-Look up the player by name in the Player table. If not found, create a new Player record with just the name.
-Set is_alternate=True if the prop_type contains "alternate"
-Set fetched_at to current UTC time
-Before inserting, delete any existing PlayerProp records for the same player_id, game_id, prop_type, bookmaker, and line_value to avoid duplicates
+### 5. Configure environment variables
 
+Create a file named `.env` in the project root with the following contents:
 
-Commit all changes to the database after each game is fully processed.
-Return a summary dict:
+```env
+ODDS_API_KEY=your_odds_api_key_here
+SECRET_KEY=any_random_string_for_flask_sessions
+```
 
-python{"games_processed": X, "props_stored": Y, "errors": []}
+Replace `your_odds_api_key_here` with the key issued to you by The Odds API. `SECRET_KEY` can be any non-trivial string — it is only used for Flask session signing in development.
 
-TASK 4 — Create routes/screener.py
-Create a new Flask Blueprint called screener_bp with url_prefix /api/screener.
-Add one endpoint: GET /api/screener/props
-Query parameters:
+### 6. Start the application
 
-min_odds (int, default -300) — minimum American odds
-max_odds (int, default 300) — maximum American odds
-min_hit_rate (float, default 0.0) — minimum hit rate 0.0 to 1.0
-sample_size (int, default 20) — games to look back for hit rate
-stat (str, optional) — filter by specific prop_type
-side (str, default "over") — "over" or "under"
+```bash
+cd backend
+python app.py
+```
 
-Logic:
+The server will listen on `http://localhost:5000`. On first launch it will:
 
-Query PlayerProp table filtering by odds range on over_odds or under_odds depending on side parameter
-Optionally filter by prop_type if stat param provided
-For each matching prop, calculate hit rate using hit_rate() from analytics.py for single stats, or combo_hit_rate() for combo props (prop_types containing underscore-joined stats)
-Filter results by min_hit_rate
-Return JSON list, each item containing:
+1. Create the SQLite database file at `backend/instance/nba.db`.
+2. Automatically fetch today's games, player props, and game logs in the background. The first launch can take 60–90 seconds while the initial data populates.
 
-json{
-  "player_name": "LeBron James",
-  "prop_type": "player_points",
-  "line_value": 25.5,
-  "over_odds": -110,
-  "under_odds": -110,
-  "bookmaker": "draftkings",
-  "is_alternate": false,
-  "hit_rate": 0.70,
-  "hit_rate_pct": "70.0%",
-  "trend": "up",
-  "games_used": 20
-}
-Sort results by hit_rate descending.
+You should see log lines like `Database tables created (or already exist)` followed by `Startup init complete. App is ready.` when it is finished.
 
-TASK 5 — Update app.py
-Add a route POST /api/admin/fetch-props that calls fetch_and_store_props() from data_fetcher.py and returns the summary dict. This is the manual trigger to refresh odds data.
-Import and register screener_bp from routes/screener.py alongside existing blueprints.
+### 7. Manually trigger a data refresh (optional)
 
-TASK 6 — Update README.md
-Replace the contents of README.md with the full spec provided separately. Do not summarize it — copy it exactly.
+If you want to force a re-fetch (for example, the day after first launch), the app exposes three admin endpoints. With the server running, in a second terminal:
 
-After all tasks are complete, verify the app starts cleanly with no import errors. Do not commit anything.
+```bash
+curl -X POST http://localhost:5000/api/admin/fetch-props        # refresh today's prop lines
+curl -X POST http://localhost:5000/api/admin/fetch-gamelogs     # refresh recent game logs
+curl -X POST http://localhost:5000/api/admin/backfill-player-meta  # fill in missing player names/teams/positions
+```
+
+Each call returns a JSON summary of how many rows were inserted or updated.
+
+### 8. Use the application
+
+Open <http://localhost:5000> in any modern browser (Chrome or Firefox recommended). From the homepage you can:
+
+- Filter today's player props by prop type, odds range, and minimum hit rate using the **Prop Screener**.
+- Click any of the **Today's Games** cards to see all available props for that matchup.
+- Use the **Select Team / Select Player** dropdowns in the header to jump directly to a player's detail page with their recent game logs and trend chart.
+
+---
+
+## Project Layout
+
+```
+.
+├── backend/
+│   ├── app.py              # Flask app factory, route registration, admin endpoints
+│   ├── models.py           # SQLAlchemy models: Player, Game, PlayerProp, GameLog
+│   ├── analytics.py        # hit_rate, combo_hit_rate, trend functions
+│   ├── data_fetcher.py     # Outbound calls to The Odds API and nba_api
+│   ├── routes/             # Blueprints: home, game, player, odds, screener, analytics
+│   └── instance/nba.db     # SQLite database (auto-created on first run)
+├── frontend/
+│   ├── templates/          # Jinja2 templates (base, index, game, player)
+│   └── static/             # CSS and JS assets
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Troubleshooting
+
+- **`ODDS_API_KEY` not set warning:** Confirm the `.env` file is in the project root (not inside `backend/`) and that the variable name is spelled exactly `ODDS_API_KEY`.
+- **`502 The Odds API returned status 401`:** The supplied API key is invalid or has hit its monthly request quota. Generate a new key from <https://the-odds-api.com>.
+- **Player page shows id number with placeholder team/position:** Run the `backfill-player-meta` admin endpoint shown in step 7. Some players require a second metadata fetch after their first prop appears.
+- **No games shown on the homepage:** The NBA regular season runs October through April with playoffs continuing into June. During the offseason The Odds API will return an empty list and the app will display a "no games today" message — this is expected behavior, not an error.
